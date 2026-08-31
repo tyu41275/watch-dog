@@ -1,0 +1,32 @@
+{
+  "resolved_at": "2026-08-31T23:15:21Z",
+  "target": "tyu41275/watch-dog#1",
+  "lookup_order": [
+    "product/repository",
+    "chatter_instance",
+    "global"
+  ],
+  "authoritative_obsidian_main": "29bd90f62fe7ed36cc36214f00c70e6a8ded2c8a",
+  "resolution": "complete_failure_safe_fallback",
+  "reason": "No applicable dispatch-task policy is present on authoritative Obsidian main. The proposed global and personal-comms policies exist only in unmerged commit 2d1ad3b63b657678f4fe0aeadbe93252285a0a61 under open issue tyu41275/Obsidian#389 and therefore are not active policy.",
+  "unmerged_proposal": {
+    "commit": "2d1ad3b63b657678f4fe0aeadbe93252285a0a61",
+    "global_sha256": "2c27d7a770b0213b3021dec86942d29668a50a970e55252f92d4b3af3ea3204e",
+    "personal_comms_sha256": "445dc9b7536c673d54f9db0621badbadf494e99f760ee5ee37257cdd2a442c80",
+    "status": "evidence_only_not_applied"
+  },
+  "effective": {
+    "default_execution_mode": "serial",
+    "max_implementation_workers": 1,
+    "max_read_only_workers": 1,
+    "max_heavy_verification_workers": 1,
+    "worker_lease_ttl_seconds": 1800
+  },
+  "field_provenance": {
+    "default_execution_mode": "operator contract safe fallback",
+    "max_implementation_workers": "operator contract safe fallback",
+    "max_read_only_workers": "operator contract safe fallback",
+    "max_heavy_verification_workers": "operator contract safe fallback",
+    "worker_lease_ttl_seconds": "bounded to the shortest proposed value because the fallback contract does not state a separate TTL"
+  }
+}
