@@ -5,9 +5,9 @@ Date: 2026-08-31
 
 ## Context
 
-Watch Dog must demonstrate useful WebMCP behavior before the September 3, 2026 submission deadline while handling hostile URL and page data honestly. The long-term vision is arbitrary active-tab inspection, but a normal page cannot read unrelated third-party tabs. A server fetch also cannot reproduce a browser's rendered/authenticated state and creates an SSRF boundary.
+Watch Dog must provide useful WebMCP behavior while handling hostile URL and page data honestly. The long-term vision includes arbitrary active-tab inspection, but a normal page cannot read unrelated third-party tabs. A server fetch also cannot reproduce a browser's rendered or authenticated state and creates an SSRF boundary.
 
-The operator requires both paste analysis and rendered-DOM inspection as first-class MVP/demo features. The independent gpt-5.6-luna review correctly rejected language that implied browser-wide inspection and identified missing typed states, SSRF controls, prompt-injection handling, provider semantics, and submission requirements.
+The product requires both paste analysis and rendered-DOM inspection as first-class initial-release features. Independent review rejected language that implied browser-wide inspection and identified missing typed states, SSRF controls, prompt-injection handling, and provider semantics.
 
 ## Decision
 
@@ -59,7 +59,7 @@ Use one static username/password pair held only in server environment secrets an
 
 ## Rejected alternatives
 
-- **Paste-only MVP:** rejected by operator decision; it underuses WebMCP and cannot demonstrate rendered DOM.
+- **Paste-only MVP:** rejected because it underuses WebMCP and cannot demonstrate rendered DOM.
 - **Arbitrary active-tab MVP:** rejected because it requires extension permissions and cannot be honestly delivered as page-only WebMCP.
 - **Hard-coded reference results:** rejected because it does not prove invocation-time DOM inspection.
 - **Separate pipelines per mode:** rejected because results would drift and could not be compared.

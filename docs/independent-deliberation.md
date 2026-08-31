@@ -5,12 +5,12 @@ Date: 2026-08-31
 
 ## Provenance
 
-- Vision author: `gpt-5.6-sol`, task `4d430590`, run `f1f044b6`, thread `1544082582340374681`
-- Independent critic: `gpt-5.6-luna`, task `9b942db0`, run `6a155f76`, thread `1544082789132144640`
-- Critic output SHA-256: `63b138829e3659fe21db1d6d0eeb50584f71e1d3769ea53bfd1224d6c9840543`
-- Synthesis authority: latest operator decision in the needs-plan request
+- Vision baseline: [vision-brief.md](vision-brief.md)
+- Independent review: [gpt-5.6-luna-critique-v1.0.0.md](deliberation/gpt-5.6-luna-critique-v1.0.0.md)
+- Original critic output SHA-256 before public-record sanitization: `63b138829e3659fe21db1d6d0eeb50584f71e1d3769ea53bfd1224d6c9840543`
+- Controlling synthesis: [reconciliation-v1.0.2.md](deliberation/reconciliation-v1.0.2.md)
 
-The critic ran read-only and did not coordinate with the vision author. Its disposition was conditional GO for a thin hackathon prototype and NO-GO for implied production/browser-wide security claims.
+The review was performed independently against a frozen input packet. Its disposition was conditional GO for the bounded initial release and NO-GO for implied production or browser-wide security claims.
 
 ## Accepted findings
 
@@ -30,9 +30,9 @@ The synthesis adopts the following review findings as non-negotiable:
 - test WebMCP tool schemas, selection, parameters, sequences, outputs, and UI effects; and
 - include the complete Devpost live URL, public repo/license/instructions, description, and public sub-three-minute YouTube deliverables.
 
-## Operator override
+## Product priority clarification
 
-The critic recommended treating active-tab scanning as extension-only and described same-origin DOM extraction as keepable. The operator clarified the product vocabulary and priority:
+The review recommended treating active-tab scanning as extension-only and described same-origin DOM extraction as keepable. The final product decision clarified the vocabulary and priority:
 
 - **Accepted:** arbitrary unrelated third-party active-tab scanning requires an extension and is deferred.
 - **Overridden:** rendered-DOM scanning is not demoted. Live Page Scan Demo is a protected MVP mode equal to Paste Scan.

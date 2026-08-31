@@ -1,10 +1,10 @@
 # Watch Dog critic reconciliation
 
-Status: **Superseded by v1.0.2 after operator priority override**
+Status: **Superseded by v1.0.2 after product priority clarification**
 Vision revision: 1.0.1
 Date: 2026-08-31
-Input packet: v1.0.0, SHA-256 `20bc6eb57bf2a217c061b6ab72be54ca5a0ba20066852aafb32d57af33f84116`
-Critic invocation: independent `gpt-5.6-luna`, high reasoning effort
+Original input packet: v1.0.0, pre-sanitization SHA-256 `20bc6eb57bf2a217c061b6ab72be54ca5a0ba20066852aafb32d57af33f84116`
+Review method: independent critique against the frozen input packet
 Critic verdict: `conditional-go`
 
 ## Accepted corrections
@@ -26,8 +26,8 @@ Critic verdict: `conditional-go`
 
 ## Result
 
-Vision v1.0.1 remains a conditional go for implementation planning. No final needs-plan issue has been created. Release requires every hard gate in the compliance matrix and action plan; documentation alone is not submission readiness.
+Vision v1.0.1 remained a conditional go for implementation planning. Release requires every hard gate in the compliance matrix and action plan; documentation alone is not release readiness.
 
 ## Supersession note
 
-The later operator decision made Paste Scan and the Watch Dog-owned Live Page Scan Demo equal protected P0 features. See `reconciliation-v1.0.2.md`. This v1.0.1 record remains unchanged otherwise as historical deliberation evidence.
+The later product decision made Paste Scan and the Watch Dog-owned Live Page Scan Demo equal protected P0 features. See `reconciliation-v1.0.2.md`. This v1.0.1 record remains unchanged otherwise as historical deliberation evidence.

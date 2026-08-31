@@ -3,7 +3,7 @@
 Status: **Execution-ready from approved vision v1.0.1**
 Deadline: 2026-09-03 1:00 PM PDT / 20:00 UTC
 
-This is a deadline sequence, not the final `worker:needs-plan` issue. Every cut follows the user-authorized order.
+This delivery sequence turns the approved product scope into an executable release plan. Its cut order preserves the product's trust and capability boundaries.
 
 **Protected priority:** Paste Scan and Live Page Scan Demo are equal P0 entry modes. Both must exist in the first vertical slice and neither is cuttable. The Live Page Scan tool name is literally `inspect_current_page`; arbitrary third-party active-tab inspection and the Chrome extension are P2, not deadline stretch.
 
@@ -49,9 +49,10 @@ This is a deadline sequence, not the final `worker:needs-plan` issue. Every cut 
 
 **After P0 only:** the second live adapter is P1. Arbitrary third-party active-tab inspection and the Chrome extension are P2/post-submission. Never trade either protected scan mode, security, the live app, video, or required materials for them.
 
-## Owner-dependent gates
+## External release gates
 
-- Register/join the Devpost challenge and confirm entrant eligibility.
-- Supply deployment access and at least one provider credential under acceptable terms.
-- Choose and securely place the static judge username/password.
-- Record narration/voice and make the final Devpost submission.
+- [x] Complete challenge registration.
+- [x] Configure deployment access without committing credentials.
+- [x] Generate and securely store the static testing credentials.
+- [ ] Configure at least one provider credential under acceptable terms.
+- [ ] Record narration and complete the final release submission.

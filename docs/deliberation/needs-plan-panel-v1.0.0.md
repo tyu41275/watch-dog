@@ -1,36 +1,41 @@
-# Watch Dog needs-plan panel follow-up
+# Watch Dog implementation-plan review
 
 Status: Reconciled
 Date: 2026-08-31
-Target: `worker:needs-plan` parent draft for `tyu41275/watch-dog`
-Draft artifact: `/home/ductor-user/.ductor/host-chatter/runtime/data/tasks/a2b73024/watch-dog-needs-plan.md`
+Target: [implementation parent issue #1](https://github.com/tyu41275/watch-dog/issues/1)
 
-## Panel configuration
+## Review scope
 
-- `feasibility-skeptic` via `chatgpt_account/gpt-5.5`
-- `scope-adversary` via `chatgpt_account/gpt-5.6-luna`
-- `ops-adversary` via `claude/opus`
+The proposed implementation parent was reviewed for feasibility, scope control, dependency correctness, security coverage, deployment readiness, and deadline risk. Two independent reviews completed. A third operations review was unavailable and is not represented as completed.
 
-The panel was resolved from the global default adversary registry and run against the saved 202-line parent draft with read-only access to this repository checkout.
+## Findings
 
-## Outcome
+### Dependency enforcement
 
-- `gpt-5.5` returned `revise-first` and identified one blocking defect: decomposition ordering still lived partly in prose, which is not poller-enforceable.
-- `gpt-5.6-luna` returned `revise-first` with the same blocking defect and one advisory: initial decomposition should treat P1 as deferrable until P0 evidence is green.
-- `claude/opus` did not complete. Dispatch failed with `Failed to authenticate: OAuth session expired and could not be refreshed`.
+Verdict: `revise-first`
 
-## Reconciled actions
+The draft described important prerequisites—shared contracts before consumers, protected modes before deployment acceptance, and deployment evidence before release verification—partly as prose. Narrative ordering is not sufficient when work is decomposed into independently executable child issues.
 
-The blocking panel finding is accepted and resolved in the parent draft by:
+Required correction: every generated child with a prerequisite must carry a concrete `Blocked by tyu41275/watch-dog#N` dependency after issue numbers exist.
 
-- replacing the prose-only ordering bullets with an explicit planner instruction that generated numbered children must carry literal `Blocked by tyu41275/watch-dog#N` edges; and
-- enumerating the required dependency edges as planner obligations instead of narrative sequencing.
+### Scope control
 
-The P1 advisory is accepted as a boundary clarification and resolved in the parent draft by stating that initial decomposition does not require any P1 child issues before all P0 evidence is green.
+Verdict: `revise-first`
 
-No repo-vision change was required. The approved synthesis at commit `69381787bccc52a5c8f07464b4d1e3f8ff16475c` remains the controlling product boundary; this follow-up only tightens the parent-intake filing contract.
+The same dependency defect applied to the relationship between shared contracts and the two scan modes. The review also found that P1 work should remain optional until all P0 release evidence is green.
 
-## Evidence
+Required corrections:
 
-- Panel report artifact: `/home/ductor-user/.ductor/host-chatter/runtime/data/tasks/a2b73024/watch-dog-panel-report.md`
-- Panel log artifact: `/home/ductor-user/.ductor/host-chatter/runtime/data/tasks/a2b73024/watch-dog-panel-report.log`
+- encode every prerequisite as a concrete child-issue dependency;
+- treat the initial decomposition as one bounded P0 release slice with a final release gate; and
+- do not require P1 child issues during initial decomposition.
+
+## Reconciliation
+
+The accepted findings are incorporated into issue #1:
+
+- generated children must use literal `Blocked by tyu41275/watch-dog#N` edges;
+- planner obligations enumerate the required dependency relationships; and
+- P1 work is explicitly deferrable until P0 evidence is green.
+
+No product-vision change was required. The approved synthesis at commit `69381787bccc52a5c8f07464b4d1e3f8ff16475c` remains the controlling product boundary. This document is the durable, sanitized record of the planning review.

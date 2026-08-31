@@ -69,4 +69,4 @@ A link-opening action initiated from Watch Dog's UI. It may show a warning and C
 
 ## STIX/TAXII
 
-Threat-intelligence interchange standards. They are explicitly outside this MVP because no submission-critical consumer requires them.
+Threat-intelligence interchange standards. They are explicitly outside the initial release because no current product integration requires them.

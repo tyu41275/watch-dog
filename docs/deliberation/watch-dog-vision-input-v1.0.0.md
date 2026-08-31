@@ -1,9 +1,10 @@
 # Watch Dog independent critic input packet
 
-Packet version: **1.0.0**
-Frozen: 2026-08-31
-Intended critic: `gpt-5.6-luna` in a separate agent context
-Edit policy: the critic must not edit repository or Obsidian files
+Packet version: **1.0.0-public**
+Original packet frozen: 2026-08-31
+Public record: environment metadata sanitized; substantive product decisions unchanged
+Review mode: independent, read-only critique of this frozen packet
+Edit policy: the reviewer must not edit project files
 
 ## Review objective
 
@@ -60,7 +61,7 @@ Provider facts checked against primary documentation: Google Safe Browsing is de
 
 Day 1 deploys authenticated WebMCP spine, safe fetch, provider contract/fixtures, and one live adapter. Day 2 adds live-DOM demo, policy/evidence, disclosure, and confirmed quarantined sightings. Day 3 adds interstitial, security/clean-room tests, records the video, completes materials, submits, tags, and freezes.
 
-Owner-dependent unknowns: deployment access, at least one acceptable provider credential, static judge credentials, entrant eligibility/registration, voice recording, and final Devpost submission.
+External delivery unknowns at the time of review: deployment access, at least one acceptable provider credential, static testing credentials, entrant eligibility and registration, voice recording, and final launch submission.
 
 ## Required critic response
 
@@ -76,4 +77,4 @@ Return an unedited Markdown critique with:
 8. a final list of non-negotiable release gates;
 9. explicit confirmation that you did not inspect another critic output or edit shared files.
 
-Do not propose the needs-plan issue. Do not broaden the MVP unless a change is required for compliance or safety.
+Do not propose implementation issue structure. Do not broaden the MVP unless a change is required for compliance or safety.

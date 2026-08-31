@@ -2,7 +2,7 @@
 
 Status: Complete
 Recorded: 2026-08-31
-Source: parent operator decisions provided to vision task `4d430590`, run `f1f044b6`, thread `1544082582340374681`, with the latest two-mode correction supplied to the synthesis task.
+Source: product decisions captured during the initial vision review and subsequent two-mode priority clarification.
 
 ## Approved answers
 
@@ -19,6 +19,6 @@ Source: parent operator decisions provided to vision task `4d430590`, run `f1f04
 11. **Observable success:** both modes visibly work through one pipeline; the post-load anchor proves DOM timing; results show honest uncertainty and provenance.
 12. **Deferrals:** arbitrary third-party active-tab extension, STIX/TAXII, reputation weighting, production auth, autonomous navigation/blocking, and a second provider if it threatens submission readiness.
 
-## Latest operator override
+## Priority clarification
 
 Any recommendation to demote rendered-DOM inspection is superseded. Paste Scan and Live Page Scan Demo are equal MVP/demo priorities. The Live Page Scan Demo remains bounded to Watch Dog's reference page; the Chrome extension remains deferred.

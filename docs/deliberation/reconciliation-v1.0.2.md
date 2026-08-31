@@ -1,11 +1,11 @@
 # Watch Dog final critic reconciliation
 
-Status: **Complete and operator-ratified**
+Status: **Complete and approved**
 Vision revision: 1.0.2
 Date: 2026-08-31
-Inputs: vision v1.0.0, gpt-5.6-luna critique v1.0.0, reconciliation v1.0.1, and latest operator decision
+Inputs: vision v1.0.0, independent critique v1.0.0, reconciliation v1.0.1, and final product priority decision
 
-## Operator override
+## Product priority clarification
 
 Paste Scan and Live Page Scan Demo are equal protected P0 entry modes. Any recommendation or schedule that demotes the DOM mode is superseded. The demo mode is honestly limited to one fixed, safe, Watch Dog-owned same-origin reference document; arbitrary third-party active-tab scanning still requires the deferred Chrome extension.
 

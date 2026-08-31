@@ -8,7 +8,7 @@ The official rules are controlling and may change. Recheck them immediately befo
 
 | Official requirement / criterion | Watch Dog response | Evidence or release gate | Current status |
 | --- | --- | --- | --- |
-| Submit by Sep 3, 2026, 1:00 PM PDT | Freeze and submit before 20:00 UTC; leave recovery margin. | Devpost confirmation receipt | Pending owner action |
+| Submit by Sep 3, 2026, 1:00 PM PDT | Freeze and submit before 20:00 UTC; leave recovery margin. | Devpost confirmation receipt | Pending |
 | WebMCP-powered web app for human-agent collaboration | Paste Scan and the equal-priority Live Page Scan Demo share one evidence pipeline; `inspect_current_page` performs invocation-time rendered-DOM extraction. | Source containing `document.modelContext.registerTool(...)`; live tool test including the post-load anchor | Designed |
 | Working, consistently runnable project | One deployed TypeScript app, bounded server pipeline, fixtures, smoke test. | Live URL plus `README` run/test instructions | Not implemented |
 | New during submission period or clearly documented WebMCP extension | Repository began during the Aug 25–Sep 3 period; preserve timestamped commits. | Public commit history and submission-period note | In progress |
@@ -29,7 +29,7 @@ The official rules are controlling and may change. Recheck them immediately befo
 | Demo is publicly visible on YouTube | Upload as Public, not Unlisted, before submission. | Logged-out playback check | Not uploaded |
 | Demo avoids unauthorized trademarks/music/material | Use owned UI/assets, no copyrighted music, and only necessary factual product/provider names. | Media rights checklist | Pending |
 | English materials or English translations | Publish repo, description, instructions, and narration in English. | Submission review | Planned |
-| Free, unrestricted judge access through judging | Keep app and credentials live through Sep 21, 2026 5:00 PM PDT. Do not introduce paid gates. | Uptime owner/check | Pending |
+| Free, unrestricted judge access through judging | Keep app and credentials live through Sep 21, 2026 5:00 PM PDT. Do not introduce paid gates. | Logged-out uptime check | Pending |
 | Do not alter submission after deadline | Freeze submitted repo/live site/Devpost entry through judging; fork for later work if necessary. | Tagged release and freeze record | Pending |
 | Stage-one viability/theme fit | Demo a real WebMCP workflow, not only documentation or mocks. | Live app/video/repo | Not implemented |
 | Safe arbitrary server fetch (product release gate) | No redirects unless pinned, public-destination validation, runtime isolation, resource/log/referrer tests. | Security test report | Hard gate not yet met |

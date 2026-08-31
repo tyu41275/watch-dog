@@ -1,19 +1,18 @@
-# Watch Dog independent critique — raw record
+# Watch Dog independent critique — sanitized record
 
-Invocation model requested by orchestrator: `gpt-5.6-luna`
-Reasoning effort: `high`
-Packet: `watch-dog-vision-input-v1.0.0.md`
-Verified packet SHA-256: `20bc6eb57bf2a217c061b6ab72be54ca5a0ba20066852aafb32d57af33f84116`
+Review role: independent product, feasibility, and security critique
+Packet: original revision of `watch-dog-vision-input-v1.0.0.md`
+Verified original packet SHA-256: `20bc6eb57bf2a217c061b6ab72be54ca5a0ba20066852aafb32d57af33f84116`
 Run date: 2026-08-31
-Record policy: output below is preserved verbatim
+Record policy: findings preserved; execution-environment metadata sanitized for the public repository
 
 ---
 
 # Watch Dog Independent Critique
 
 **Model identity:** GPT-5/Codex, independent critic
-**Packet:** `watch-dog-vision-input-v1.0.0.md`, version 1.0.0
-**Verified SHA-256:** `20bc6eb57bf2a217c061b6ab72be54ca5a0ba20066852aafb32d57af33f84116`
+**Packet:** original review revision of `watch-dog-vision-input-v1.0.0.md`, version 1.0.0
+**Verified original SHA-256:** `20bc6eb57bf2a217c061b6ab72be54ca5a0ba20066852aafb32d57af33f84116`
 
 ## Verdict
 
@@ -116,4 +115,4 @@ The packet identifies the requirements, but several are still delivery gates rat
 11. Public sub-three-minute audio demo clearly shows the app and WebMCP.
 12. Live testing remains available through judging, and the submission is frozen at the deadline.
 
-I inspected only the specified frozen packet and verified its stated SHA-256. I did not inspect another critic output, any other Watch Dog artifact, GitHub state, Obsidian content, or conversation history, and I did not edit any shared file.
+I inspected only the specified frozen packet and verified its stated SHA-256. I did not inspect another review, any other Watch Dog artifact, or repository state, and I did not edit project files.
