@@ -1,6 +1,6 @@
 # Watch Dog critic reconciliation
 
-Status: **Complete**
+Status: **Superseded by v1.0.2 after operator priority override**
 Vision revision: 1.0.1
 Date: 2026-08-31
 Input packet: v1.0.0, SHA-256 `20bc6eb57bf2a217c061b6ab72be54ca5a0ba20066852aafb32d57af33f84116`
@@ -27,3 +27,7 @@ Critic verdict: `conditional-go`
 ## Result
 
 Vision v1.0.1 remains a conditional go for implementation planning. No final needs-plan issue has been created. Release requires every hard gate in the compliance matrix and action plan; documentation alone is not submission readiness.
+
+## Supersession note
+
+The later operator decision made Paste Scan and the Watch Dog-owned Live Page Scan Demo equal protected P0 features. See `reconciliation-v1.0.2.md`. This v1.0.1 record remains unchanged otherwise as historical deliberation evidence.

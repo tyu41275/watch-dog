@@ -9,7 +9,7 @@ The official rules are controlling and may change. Recheck them immediately befo
 | Official requirement / criterion | Watch Dog response | Evidence or release gate | Current status |
 | --- | --- | --- | --- |
 | Submit by Sep 3, 2026, 1:00 PM PDT | Freeze and submit before 20:00 UTC; leave recovery margin. | Devpost confirmation receipt | Pending owner action |
-| WebMCP-powered web app for human-agent collaboration | Three in-page tools share the visible inspection/sighting workflow. | Source containing `document.modelContext.registerTool(...)`; live tool test | Designed |
+| WebMCP-powered web app for human-agent collaboration | Paste Scan and the equal-priority Live Page Scan Demo share one evidence pipeline; `inspect_current_page` performs invocation-time rendered-DOM extraction. | Source containing `document.modelContext.registerTool(...)`; live tool test including the post-load anchor | Designed |
 | Working, consistently runnable project | One deployed TypeScript app, bounded server pipeline, fixtures, smoke test. | Live URL plus `README` run/test instructions | Not implemented |
 | New during submission period or clearly documented WebMCP extension | Repository began during the Aug 25–Sep 3 period; preserve timestamped commits. | Public commit history and submission-period note | In progress |
 | Authorized third-party integrations | Review Google Safe Browsing and URLhaus terms; use credentials server-side and attribution where required. | Adapter docs, terms note, configured secret | Pending credentials/terms check |
@@ -33,7 +33,7 @@ The official rules are controlling and may change. Recheck them immediately befo
 | Do not alter submission after deadline | Freeze submitted repo/live site/Devpost entry through judging; fork for later work if necessary. | Tagged release and freeze record | Pending |
 | Stage-one viability/theme fit | Demo a real WebMCP workflow, not only documentation or mocks. | Live app/video/repo | Not implemented |
 | Safe arbitrary server fetch (product release gate) | No redirects unless pinned, public-destination validation, runtime isolation, resource/log/referrer tests. | Security test report | Hard gate not yet met |
-| WebMCP Leverage (equal weight) | Multiple coherent tools, shared UI state, live DOM extraction, human-in-loop action. | Tool tests and demo | Designed |
+| WebMCP Leverage (equal weight) | Literal `inspect_current_page`, bounded supporting tools, shared UI/pipeline, post-load live DOM extraction, human-in-loop action, and explicit reference-page/extension disclosure. | Tool tests and both-mode demo | Designed |
 | Execution (equal weight) | Prioritize deployed coherent journey and deterministic reliability over extension breadth. | End-to-end smoke test | Designed |
 | Potential Impact (equal weight) | Specific anti-phishing decision support for everyday users with scalable agent observations. | User story and demo evidence | Designed |
 | Creativity & Ambition (equal weight) | Combine agent-native page inspection with provenance-preserving community sightings and explicit authority boundaries. | Description/demo | Designed |

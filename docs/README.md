@@ -6,6 +6,7 @@ The product vision is approved for planning. These documents are the planning ba
 2. [ADR 0001: two protected modes and one pipeline](adr/0001-mvp-boundary.md)
 3. [Vision interview record](vision-interview.md)
 4. [Independent deliberation](independent-deliberation.md)
+   - [Versioned final reconciliation](deliberation/reconciliation-v1.0.2.md)
 5. [Glossary](glossary.md)
 6. [Threat model](threat-model.md)
 7. [Devpost compliance matrix](devpost-compliance.md)
