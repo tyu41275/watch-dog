@@ -1,51 +1,58 @@
-# Under-three-minute YouTube demo workflow
+# Watch Dog sub-three-minute demo plan and resources
 
 Status: Current research snapshot
 Reviewed: 2026-08-31
 
 This is a deadline-friendly production workflow, not a product-architecture decision. Prefer tools the presenter already knows; changing editors near the deadline is a larger risk than missing a decorative effect. The approved Watch Dog story and exact proof obligations are in [demo-script-and-resources.md](demo-script-and-resources.md).
 
-## Recommended narrative budget
+1. Watch Dog is genuinely WebMCP-powered: the agent invokes a registered page tool that updates shared visible state.
+2. It helps a person reason about a URL: risk, confidence, supporting evidence, contradicting evidence, and provider status are distinct and understandable.
+3. It preserves human authority: full-URL sharing is disclosed, sightings require confirmation, and high-risk navigation warns without hard blocking.
 
-Target **2:40–2:50**, leaving ten to twenty seconds of upload and judging tolerance.
+## Shot plan
 
-| Time | Purpose |
-| --- | --- |
-| 0:00–0:10 | Show the phishing problem and one-sentence promise. |
-| 0:10–0:25 | Name Watch Dog, the intended user, and why WebMCP matters. |
-| 0:25–1:55 | Demonstrate one uninterrupted must-win journey with stable sample data. |
-| 1:55–2:25 | Show only the strongest evidence, community-corpus value, and safety boundary. |
-| 2:25–2:45 | State the result, limits, repository, and next step. |
+| Time | Screen and action | Narration purpose |
+| --- | --- | --- |
+| 0:00–0:10 | Title plus a defanged suspicious message/link | State the problem and promise: know what is known, unknown, and why before following a link. |
+| 0:10–0:25 | Live deployed Watch Dog page; authenticate quickly or begin already authenticated | Identify the two-sided experience: understandable human warnings and structured agent observations. |
+| 0:25–0:50 | Agent invokes `extract_demo_page_links`; page highlights/returns links extracted via live DOM | Prove WebMCP and `document.querySelectorAll('a[href]')` on the same-origin page. |
+| 0:50–1:30 | Select/paste deterministic risky fixture; acknowledge provider disclosure; invoke `inspect_url` | Show bounded server retrieval and the shared agent/page workflow. Clearly label fixture versus live provider evidence. |
+| 1:30–1:55 | Result card expands supporting and contradicting evidence, confidence, provider provenance, and next steps | Explain that deterministic rules/providers own the official result and AI only investigates ambiguity. |
+| 1:55–2:15 | Agent prepares a sighting; user reviews redaction/provenance and explicitly confirms quarantine | Prove community contribution cannot silently persist or self-promote to known malicious. |
+| 2:15–2:32 | Click mediated high-risk destination; warning interstitial shows Back and Continue Anyway | Show user agency and no hard blocking; return safely without visiting a live malicious URL. |
+| 2:32–2:48 | Repo/license and final product view | State limits: no safety guarantee, active-tab extension and STIX/TAXII deferred; show public repo. |
 
 Do not spend video time on installation, account creation, a feature tour, or speculative roadmap. The approved story protects both Paste Scan and Live Page Scan Demo and explicitly discloses the reference-page/extension boundary.
 
-## Fast production sequence
+## Capture and edit workflow
 
-1. **Freeze the claim sheet.** Write the three claims the video must prove, the exact screen evidence for each, and claims that must not be made. Keep the narration around 325–375 words for a calm 2.5-minute delivery.
-2. **Storyboard six to eight shots.** Use a clean browser profile, fixed window size, readable zoom, notifications disabled, deterministic demo records, and defanged/inert URLs. Preload every tab and keep a fallback screen recording of the successful path.
-3. **Record a clean master.** OBS Studio is the free, local default. Its official quick start recommends the auto-configuration wizard, explicit display/window and audio sources, and a short test recording before the real take. Record the product at 1920×1080, 30 fps, with the cursor deliberate and secrets absent.
-4. **Use one AI-assisted editor.** Descript is the fastest transcript-first option when narration is central: its current tools edit media through transcript text, remove filler words, shorten gaps, clean audio, and add captions. CapCut Desktop is a reasonable familiar alternative with auto captions and filler-word removal. Review every automated cut and caption, especially product names, security terms, and URLs.
-5. **Polish sparingly.** Add a short title card, consistent two-line captions, two or three callouts, and light audio leveling. Canva or Adobe Express can quickly create a thumbnail/title card or remove a talking-head background, but neither is required. Do not add synthetic threat evidence or AI-generated product footage that could be mistaken for the working demo.
-6. **Export and upload early.** Use 16:9 MP4, H.264 progressive video, the same frame rate as the recording, AAC-LC audio at 48 kHz, and roughly 8 Mbps for 1080p/30 fps. YouTube currently lists those as recommended upload settings. Upload unlisted first because 1080p processing can lag behind the initial low-quality version.
-7. **Run a human QA pass.** Watch the processed YouTube version once on a laptop and once on a phone. Verify duration, audio, caption accuracy, cursor visibility, readable text, absence of secrets/personal data/live malicious links, truthful claims, repository link, and that the opening ten seconds make sense without prior context.
+1. Freeze claim text and fixture identifiers; rehearse the exact tool calls twice.
+2. Use a clean 1920×1080 browser profile at readable zoom, notifications off, secrets absent, and every tab preloaded.
+3. Record 1080p/30 fps in OBS Studio after a short audio/video test. Capture a clean backup take before editing.
+4. Use one familiar editor. Transcript-based cuts, filler removal, audio cleanup, and auto-captions are useful, but review every security term, product name, URL, and cut.
+5. Export 16:9 H.264 progressive MP4 with AAC-LC 48 kHz audio at the capture frame rate. Upload early enough for 1080p processing.
+6. Set the YouTube video to **Public** (the official rule does not accept merely Unlisted), then verify duration, audio, captions, and playback while logged out on desktop and phone.
 
-## Deadline choice matrix
+## Demo acceptance checklist
 
-| Need | Lowest-risk choice | AI assist worth using | Avoid under deadline |
-| --- | --- | --- | --- |
-| Screen capture | OBS Studio or an already-familiar recorder | Noise suppression if already configured | Learning a complex scene system |
-| Spoken edit | Descript | Transcript cuts, filler removal, gap tightening, Studio Sound | Blindly accepting every AI cut |
-| Timeline edit | Familiar CapCut/Desktop editor | Auto captions, filler removal | Switching editors mid-project |
-| Title/thumbnail | Existing brand template; Canva/Adobe Express if familiar | Background removal or layout suggestions | Generating a visual identity from scratch |
-| Export | 1080p/30 H.264 MP4 | None needed | 4K/60, which adds render and processing time without helping a short UI demo |
+- Under 3:00 after YouTube processing; target leaves at least ten seconds of margin.
+- Working deployment URL is visible/readable and matches the submitted app.
+- WebMCP invocation and resulting UI change are unmistakable.
+- Audio says what was built and how WebMCP is used.
+- Fixture and live evidence are never conflated.
+- No passwords, API keys, personal data, raw sensitive query values, or live malicious links appear.
+- No unauthorized music, stock media, or unnecessary third-party logos/trademarks appear.
+- Captions correctly render “Watch Dog,” “WebMCP,” provider names, and risk labels.
+- Repo URL and Apache-2.0 license are visible near the close.
 
-## Sources
+## Official and production resources
 
-- [OBS Studio Quick Start Guide](https://obsproject.com/kb/quick-start-guide)
-- [Descript: edit media like a document](https://help.descript.com/hc/en-us/articles/10164808475149-Inline-notes)
-- [Descript AI tools overview](https://help.descript.com/hc/en-us/articles/27252457732237-AI-Tools-Overview)
-- [CapCut Desktop AI-powered editor](https://www.capcut.com/tools/desktop-ai-power)
-- [Canva AI quick tools](https://www.canva.com/help/ai-tools-pages/)
-- [Adobe Express video background remover](https://www.adobe.com/express/feature/video/remove-background)
-- [YouTube recommended upload encoding settings](https://support.google.com/youtube/answer/1722171?hl=en)
-- [YouTube: low quality after upload](https://support.google.com/youtube/answer/71674?hl=en)
+- [Devpost official rules](https://webmcp.devpost.com/rules)
+- [Devpost official WebMCP resources](https://webmcp.devpost.com/resources)
+- [WebMCP specification repository](https://github.com/webmachinelearning/webmcp)
+- [Chrome WebMCP developer documentation](https://developer.chrome.com/docs/ai/webmcp)
+- [Chrome WebMCP tool security](https://developer.chrome.com/docs/ai/webmcp/secure-tools)
+- [OpenAI WebMCP Showcase](https://developers.openai.com/showcase?view=webmcp-apps)
+- [OBS Studio quick start](https://obsproject.com/kb/quick-start-guide)
+- [YouTube recommended upload encoding](https://support.google.com/youtube/answer/1722171?hl=en)
+- [YouTube processing quality guidance](https://support.google.com/youtube/answer/71674?hl=en)
