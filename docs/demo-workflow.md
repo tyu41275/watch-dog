@@ -1,9 +1,9 @@
 # Under-three-minute YouTube demo workflow
 
-Status: Current research snapshot  
+Status: Current research snapshot
 Reviewed: 2026-08-31
 
-This is a deadline-friendly production workflow, not a product-architecture decision. Prefer tools the presenter already knows; changing editors near the deadline is a larger risk than missing a decorative effect.
+This is a deadline-friendly production workflow, not a product-architecture decision. Prefer tools the presenter already knows; changing editors near the deadline is a larger risk than missing a decorative effect. The approved Watch Dog story and exact proof obligations are in [demo-script-and-resources.md](demo-script-and-resources.md).
 
 ## Recommended narrative budget
 
@@ -17,7 +17,7 @@ Target **2:40–2:50**, leaving ten to twenty seconds of upload and judging tole
 | 1:55–2:25 | Show only the strongest evidence, community-corpus value, and safety boundary. |
 | 2:25–2:45 | State the result, limits, repository, and next step. |
 
-Do not spend video time on installation, account creation, a feature tour, or speculative roadmap. The exact story remains gated on the vision interview.
+Do not spend video time on installation, account creation, a feature tour, or speculative roadmap. The approved story protects both Paste Scan and Live Page Scan Demo and explicitly discloses the reference-page/extension boundary.
 
 ## Fast production sequence
 

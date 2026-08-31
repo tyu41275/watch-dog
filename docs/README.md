@@ -1,11 +1,18 @@
 # Watch Dog documentation
 
-The documents in this directory are intentionally incomplete until the vision interview and independent deliberation are finished.
+The product vision is approved for planning. These documents are the planning baseline:
 
-## Decision sequence
+1. [Vision brief](vision-brief.md)
+2. [ADR 0001: two protected modes and one pipeline](adr/0001-mvp-boundary.md)
+3. [Vision interview record](vision-interview.md)
+4. [Independent deliberation](independent-deliberation.md)
+5. [Glossary](glossary.md)
+6. [Threat model](threat-model.md)
+7. [Devpost compliance matrix](devpost-compliance.md)
+8. [Three-day plan](three-day-plan.md)
+9. [Demo script and resources](demo-script-and-resources.md)
+10. [Acceptance criteria](acceptance-criteria.md)
 
-1. Complete and persist the [vision interview](vision-interview.md).
-2. Run the [independent multi-model deliberation](deliberation-plan.md).
-3. Reconcile and persist the deliberation record.
-4. Complete the [vision brief](vision-brief.md), [ADR](adr/0001-mvp-boundary.md), and [glossary](glossary.md).
-5. Only then create the final `worker:needs-plan` GitHub issue with an approved Vision Status reference.
+The previous generic [demo workflow](demo-workflow.md) remains useful production research. The specific Watch Dog narrative and proof obligations are in the demo script.
+
+The governing constraint is simple: Paste Scan and Live Page Scan Demo are equal protected MVP features, and both feed one deterministic evidence pipeline. Arbitrary third-party active-tab scanning requires a future extension and is not part of the submission.

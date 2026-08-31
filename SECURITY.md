@@ -1,6 +1,6 @@
 # Security policy
 
-Watch Dog is in vision development and has no released application version yet.
+Watch Dog has an approved MVP vision but no released application version yet.
 
 ## Reporting a vulnerability
 
@@ -12,7 +12,7 @@ If private reporting is unavailable, contact the repository owner through their 
 
 ## Scope and response
 
-There is no supported release while the vision is in progress. Reports about repository configuration, documentation that could encourage unsafe handling, or accidental sensitive-data exposure are still welcome. Receipt will be acknowledged when practical; remediation and disclosure timing will depend on severity and reproducibility.
+There is no supported release yet. Reports about repository configuration, documentation that could encourage unsafe handling, or accidental sensitive-data exposure are still welcome. Receipt will be acknowledged when practical; remediation and disclosure timing will depend on severity and reproducibility.
 
 ## Safe handling
 

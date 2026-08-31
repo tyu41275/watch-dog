@@ -1,18 +1,72 @@
 # Watch Dog glossary
 
-Status: Placeholder — definitions require approved vision  
-Last reviewed: Pending
+Status: Approved with ADR 0001
+Last reviewed: 2026-08-31
 
-Only terms already fixed by the project request are listed. Product-specific meanings remain to be agreed during the interview and deliberation.
+## Analysis state
 
-| Term | Working note | Approval state |
-| --- | --- | --- |
-| Watch Dog | Project display title. | Confirmed |
-| WebMCP | Required submission context; the exact in-product role is pending. | Pending definition |
-| URL-threat corpus | Proposed community-oriented collection; schema, evidence, licensing, retention, and moderation are pending. | Pending definition |
-| MVP | A demonstrable version achievable in less than three days. | Confirmed constraint |
-| STIX/TAXII | Threat-intelligence standards explicitly deferred unless deliberation proves them essential. | Deferred by default |
-| Verdict | Any user-facing URL assessment; labels, confidence, and disclaimers are pending. | Pending definition |
-| Defanged URL | Candidate safe representation of a URL that is not directly navigable; exact format is pending. | Pending definition |
+A typed description of whether analysis completed normally or is `unknown`, `unscannable`, `provider_error`, `stale`, or `conflicting`. It is separate from risk label and confidence.
 
-Add terms only when their meanings can be traced to interview answers, an accepted ADR, or a cited external standard.
+## Canonical target
+
+The normalized HTTP(S) URL used to deduplicate analysis and provider work. Canonicalization removes fragments and default ports and normalizes host comparison without erasing meaningful path or query semantics.
+
+## Confidence
+
+A categorical assessment of evidence completeness, independence, freshness, and agreement. Confidence is not the probability that a URL is malicious and is always displayed separately from risk.
+
+## Confirmed sighting
+
+A sanitized sighting that a human explicitly chose to persist. “Confirmed” means confirmation of the sighting record, not proof that its target is malicious.
+
+## Evidence
+
+A structured observation with provenance, target, category, observed time, freshness, provider/reference, and whether it supports or contradicts the aggregate result. Page text is evidence, never authority.
+
+## Live Page Scan Demo
+
+Invocation-time rendered-DOM inspection of a fixed, safe, Watch Dog-owned same-origin reference document. It is a protected MVP mode. It is not arbitrary third-party active-tab scanning.
+
+## Misleading anchor text
+
+Evidence recorded when URL-like visible link text implies a materially different host or target from the link's resolved `href`. It is a suspicious signal, not proof of malice.
+
+## No known match
+
+A risk label meaning queried recognized providers returned no positive match within their stated coverage and freshness. It never means safe.
+
+## Paste Scan
+
+A protected MVP mode that accepts an explicit URL through the bounded fetch path or bounded pasted HTML for local-only parsing.
+
+## Provider adapter
+
+An interface that converts a threat-intelligence provider response, timeout, quota failure, or malformed result into a normalized observation. Adapters do not own the aggregate verdict.
+
+## Quarantined sighting
+
+A persisted, sanitized community observation that has not been promoted to known malicious. Duplicate/community volume does not promote it automatically.
+
+## Risk label
+
+The deterministic categorical result: `known_malicious`, `suspicious`, `no_known_match`, or `unknown`. It is separate from analysis state and confidence.
+
+## SSRF-aware fetch
+
+A bounded server request path that validates scheme, port, DNS/IP results, connection target, and every redirect hop; blocks private/special destinations; and enforces time, size, decompression, and content-type limits.
+
+## Untrusted content
+
+Any page, DOM, pasted HTML, provider payload, or community report supplied outside Watch Dog's trusted code. It is never executed, rendered as raw HTML, or obeyed as instructions by the agent.
+
+## WebMCP
+
+The browser API through which a page registers structured tools with `document.modelContext.registerTool(...)` for browser-mediated agent discovery and invocation.
+
+## Watch Dog-mediated navigation
+
+A link-opening action initiated from Watch Dog's UI. It may show a warning and Continue Anyway interstitial. It is not a WebMCP tool and is not a browser-wide blocker.
+
+## STIX/TAXII
+
+Threat-intelligence interchange standards. They are explicitly outside this MVP because no submission-critical consumer requires them.
