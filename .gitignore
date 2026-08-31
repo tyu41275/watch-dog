@@ -1,0 +1,32 @@
+# Local secrets and configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Dependencies and virtual environments
+node_modules/
+.venv/
+venv/
+
+# Build, test, and tool output
+dist/
+build/
+coverage/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+__pycache__/
+*.py[cod]
+
+# Local-only corpus experiments and recordings
+data/local/
+artifacts/
+recordings/
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/
+*.swp
