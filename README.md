@@ -1,29 +1,33 @@
 # Watch Dog
 
-> Vision in progress — foundations only. Product decisions remain pending the vision interview and independent multi-model deliberation.
+Watch Dog is a WebMCP-powered, evidence-first URL risk inspector and community threat-sighting corpus. It gives people understandable warnings while agents compare structured evidence and prepare sightings for human confirmation.
 
-Watch Dog is a proposed WebMCP anti-phishing project centered on a community URL-threat corpus. The repository is intentionally limited to deadline-safe documentation and governance scaffolding until its product vision is approved.
+## Vision status
 
-## Confirmed constraints
+**Approved for planning — v1.0.1 (2026-08-31).** Product boundaries are frozen in the [vision brief](docs/vision-brief.md) and [ADR 0001](docs/adr/0001-mvp-boundary.md). The final implementation-planning issue has intentionally not been created yet.
 
-- The MVP must be achievable in less than three days.
-- The submission should support a polished YouTube demo under three minutes.
-- STIX/TAXII implementation is out of the initial scope unless the post-interview deliberation demonstrates that it is essential.
-- No final `worker:needs-plan` issue will be created until the interview, independent deliberation, ADR, vision brief, and glossary are complete and persisted.
+The deadline MVP is a deployed web app that accepts a pasted webpage URL, fetches it server-side without executing page code, and demonstrates same-origin live-DOM link extraction with `document.querySelectorAll('a[href]')`. WebMCP tools let an agent inspect a URL, analyze the demo page's links, explain evidence, and prepare a sighting; a person remains in control of persistence and navigation.
 
-## Current contents
+## Product principles
 
-- [Vision interview](docs/vision-interview.md) — unanswered questions for the parent direct chat
-- [Vision brief](docs/vision-brief.md) — pending interview and deliberation
-- [ADR 0001](docs/adr/0001-mvp-boundary.md) — pending decision
-- [Glossary](docs/glossary.md) — definitions pending approved scope
-- [Deliberation plan](docs/deliberation-plan.md) — independent review protocol to run after the interview
-- [Demo workflow](docs/demo-workflow.md) — research placeholder
+- Evidence before assertion: categorical risk, confidence, supporting evidence, and contradicting evidence are separate fields.
+- Deterministic authority: rules and recognized providers determine the official result; AI investigates and explains but never sets it.
+- Human control: scans are ephemeral, sightings persist only after explicit confirmation, and high-risk navigation uses a warning with **Continue Anyway**, not a hard block.
+- Privacy by design: fragments are removed, sensitive query values are redacted, provenance is retained, and users see a disclosure before a full URL is sent to an external provider.
+- Deadline discipline: the active arbitrary browser tab is the long-term target; a Chrome extension is stretch-only after submission readiness.
 
-## Status
+## Documentation
 
-No application architecture, threat-scoring policy, corpus contribution policy, interview response, or delivery plan has been approved yet. These omissions are deliberate.
+- [Vision brief](docs/vision-brief.md)
+- [ADR 0001: architecture and deadline boundary](docs/adr/0001-mvp-boundary.md)
+- [Glossary](docs/glossary.md)
+- [Devpost compliance matrix](docs/devpost-compliance-matrix.md)
+- [Three-day action plan](docs/three-day-action-plan.md)
+- [Sub-three-minute demo plan and resources](docs/demo-workflow.md)
+- [Vision interview record](docs/vision-interview.md)
+- [Frozen Luna critic input v1.0.0](docs/deliberation/watch-dog-vision-input-v1.0.0.md)
+- [Raw Luna critique v1.0.0](docs/deliberation/gpt-5.6-luna-critique-v1.0.0.md) and [reconciliation v1.0.1](docs/deliberation/reconciliation-v1.0.1.md)
 
 ## License
 
-Licensed under the [Apache License 2.0](LICENSE), a permissive license with an explicit patent grant.
+Licensed under the [Apache License 2.0](LICENSE).

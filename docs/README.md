@@ -1,11 +1,16 @@
 # Watch Dog documentation
 
-The documents in this directory are intentionally incomplete until the vision interview and independent deliberation are finished.
+Vision status: **Approved for planning — v1.0.1 (2026-08-31)**
 
-## Decision sequence
+The parent direct-chat interview is complete. The authoritative product decisions, official Devpost requirements, independent critique, and reconciliation are persisted here. The final `worker:needs-plan` issue remains intentionally uncreated until the owner reviews this packet.
 
-1. Complete and persist the [vision interview](vision-interview.md).
-2. Run the [independent multi-model deliberation](deliberation-plan.md).
-3. Reconcile and persist the deliberation record.
-4. Complete the [vision brief](vision-brief.md), [ADR](adr/0001-mvp-boundary.md), and [glossary](glossary.md).
-5. Only then create the final `worker:needs-plan` GitHub issue with an approved Vision Status reference.
+## Canonical artifacts
+
+- [Vision brief](vision-brief.md)
+- [ADR 0001](adr/0001-mvp-boundary.md)
+- [Glossary](glossary.md)
+- [Devpost compliance matrix](devpost-compliance-matrix.md)
+- [Three-day action plan](three-day-action-plan.md)
+- [Demo plan and resources](demo-workflow.md)
+- [Interview record](vision-interview.md)
+- [Deliberation records](deliberation/)
