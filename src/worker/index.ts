@@ -24,6 +24,7 @@ import {
   executeLiveScan,
   parseLiveRequest,
 } from "./live.js";
+import { GoogleSafeBrowsingAdapter } from "./providers/google.js";
 
 interface AssetBinding {
   fetch(request: Request): Promise<Response>;
@@ -235,6 +236,7 @@ async function pasteScan(request: Request, env: Env): Promise<Response> {
   try {
     const receipt = await executePasteScan(input, {
       store: (result) => storeResult(binding, claims.sid, result),
+      provider: new GoogleSafeBrowsingAdapter(env.GOOGLE_SAFE_BROWSING_API_KEY),
     });
     return json(receipt, 201);
   } catch {
@@ -262,6 +264,7 @@ async function liveScan(request: Request, env: Env): Promise<Response> {
   try {
     const receipt = await executeLiveScan(input, {
       store: (result) => storeResult(binding, claims.sid, result),
+      provider: new GoogleSafeBrowsingAdapter(env.GOOGLE_SAFE_BROWSING_API_KEY),
     });
     return json(receipt, 201);
   } catch {

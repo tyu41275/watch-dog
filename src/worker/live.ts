@@ -6,6 +6,7 @@ import {
   type ExtractedLinkCandidate,
   type ScanResult,
 } from "../shared/contracts.js";
+import type { ProviderAdapter } from "./providers/types.js";
 
 export const LIVE_LIMITS = {
   max_request_bytes: 256_000,
@@ -44,6 +45,7 @@ export interface LiveReceipt {
 
 export interface LiveDependencies {
   store(result: ScanResult): Promise<string>;
+  provider?: ProviderAdapter;
   now?: () => Date;
 }
 
@@ -167,12 +169,24 @@ export async function executeLiveScan(
         reason: "url_too_long" as const,
       }))),
   ].sort((left, right) => left.occurrence_index - right.occurrence_index);
-  const results: ScanResult[] = targets.map((target) => aggregateAnalysis({
-    scan_id: "pending",
-    mode: "live_page",
-    analyzed_at: analyzedAt,
-    target,
-  }));
+  const results: ScanResult[] = [];
+  for (const target of targets) {
+    const providerObservations = dependencies.provider === undefined ? undefined : [
+      await dependencies.provider.observe({
+        canonical_target: target.canonical_url,
+        requested_at: analyzedAt,
+      }),
+    ];
+    results.push(aggregateAnalysis({
+      scan_id: "pending",
+      mode: "live_page",
+      analyzed_at: analyzedAt,
+      target,
+      ...(providerObservations === undefined ? {} : {
+        provider_observations: providerObservations,
+      }),
+    }));
+  }
   results.push(...rejections.map(({ reason }) => unavailable(reason, analyzedAt)));
   if (results.length === 0) results.push(unavailable("no_candidates", analyzedAt));
   const truncated = results.length > LIVE_LIMITS.max_results;

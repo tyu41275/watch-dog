@@ -1,13 +1,13 @@
 import type {
-  ProviderErrorCode,
   ProviderObservation,
 } from "../../shared/contracts.js";
-import { canonicalizeUrl } from "../../shared/canonicalize.js";
 import {
   PROVIDER_ADAPTER_LIMITS,
   RECOGNIZED_MALICIOUS_CATEGORIES,
   freshnessAt,
+  providerErrorObservation,
   timestamp,
+  validateProviderRequest,
   type ProviderAdapter,
   type ProviderRequest,
   type RecognizedMaliciousCategory,
@@ -31,39 +31,6 @@ export type FixtureProviderScenario =
   | { outcome: "malformed_response" }
   | { outcome: "not_configured" };
 
-function validateRequest(request: ProviderRequest): void {
-  timestamp(request.requested_at, "requested_at");
-  if (
-    request.canonical_target.length === 0 ||
-    request.canonical_target.length > PROVIDER_ADAPTER_LIMITS.max_target_chars
-  ) {
-    throw new TypeError("canonical_target exceeds provider adapter limits");
-  }
-  const canonical = canonicalizeUrl(request.canonical_target);
-  if (!canonical.ok || canonical.target.canonical_url !== request.canonical_target) {
-    throw new TypeError("canonical_target must already be canonical HTTP(S)");
-  }
-}
-
-function errorObservation(
-  request: ProviderRequest,
-  error: ProviderErrorCode,
-): ProviderObservation {
-  return {
-    provider: "google_safe_browsing",
-    source: "fixture",
-    queried_target: request.canonical_target,
-    observed_at: new Date(timestamp(request.requested_at, "requested_at")).toISOString(),
-    expires_at: null,
-    freshness: "unknown",
-    state: error === "not_configured" ? "not_configured" : "error",
-    category: null,
-    confidence: "low",
-    reference: null,
-    error,
-  };
-}
-
 /** Explicitly test-only normalization adapter. It performs no network access. */
 export class FixtureProviderAdapter implements ProviderAdapter {
   readonly provider = "google_safe_browsing" as const;
@@ -74,7 +41,7 @@ export class FixtureProviderAdapter implements ProviderAdapter {
   }
 
   async observe(request: ProviderRequest): Promise<ProviderObservation> {
-    validateRequest(request);
+    validateProviderRequest(request);
     try {
       const scenario = this.scenario;
       if (
@@ -84,22 +51,26 @@ export class FixtureProviderAdapter implements ProviderAdapter {
         scenario.outcome === "malformed_response" ||
         scenario.outcome === "not_configured"
       ) {
-        return errorObservation(request, scenario.outcome);
+        return providerErrorObservation(request, this.source, scenario.outcome);
       }
       if (scenario.outcome !== "match" && scenario.outcome !== "no_match") {
-        return errorObservation(request, "malformed_response");
+        return providerErrorObservation(request, this.source, "malformed_response");
       }
 
       if (typeof scenario.observed_at !== "string") throw new TypeError("invalid observed_at");
       const observed = timestamp(scenario.observed_at, "observed_at");
       const requested = timestamp(request.requested_at, "requested_at");
-      if (observed > requested) return errorObservation(request, "malformed_response");
+      if (observed > requested) {
+        return providerErrorObservation(request, this.source, "malformed_response");
+      }
 
       let expiresAt: string | null = null;
       if (scenario.expires_at !== null) {
         if (typeof scenario.expires_at !== "string") throw new TypeError("invalid expires_at");
         const expires = timestamp(scenario.expires_at, "expires_at");
-        if (expires < observed) return errorObservation(request, "malformed_response");
+        if (expires < observed) {
+          return providerErrorObservation(request, this.source, "malformed_response");
+        }
         expiresAt = new Date(expires).toISOString();
       }
       const reference = scenario.reference ?? null;
@@ -108,7 +79,7 @@ export class FixtureProviderAdapter implements ProviderAdapter {
         (typeof reference !== "string" ||
           reference.length > PROVIDER_ADAPTER_LIMITS.max_reference_chars)
       ) {
-        return errorObservation(request, "malformed_response");
+        return providerErrorObservation(request, this.source, "malformed_response");
       }
       if (
         scenario.outcome === "match" &&
@@ -116,7 +87,7 @@ export class FixtureProviderAdapter implements ProviderAdapter {
           !RECOGNIZED_MALICIOUS_CATEGORIES.includes(scenario.category) ||
           scenario.category.length > PROVIDER_ADAPTER_LIMITS.max_category_chars)
       ) {
-        return errorObservation(request, "malformed_response");
+        return providerErrorObservation(request, this.source, "malformed_response");
       }
 
       const observedAt = new Date(observed).toISOString();
@@ -135,7 +106,7 @@ export class FixtureProviderAdapter implements ProviderAdapter {
         error: null,
       };
     } catch {
-      return errorObservation(request, "malformed_response");
+      return providerErrorObservation(request, this.source, "malformed_response");
     }
   }
 }
