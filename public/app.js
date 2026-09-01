@@ -29,7 +29,7 @@ async function showReceipt(receipt) {
     if (body?.status !== "ok" || typeof body.result !== "object") throw new Error("malformed_response");
     return body.result;
   }));
-  if (generation !== sessionGeneration || scanPanel.hidden) return;
+  if (generation !== sessionGeneration || scanPanel?.hidden === true) return;
   renderResults(results, records);
   setStatus(`Rendered ${records.length} bounded result${records.length === 1 ? "" : "s"}.`);
 }
@@ -104,7 +104,7 @@ document.addEventListener("watchdog:scan-receipt", (event) => {
     setStatus(error?.message || "service_unavailable", "error"));
 });
 document.addEventListener("watchdog:scan-result", (event) => {
-  if (!scanPanel.hidden) { renderResults(results, [event.detail]); setStatus("Rendered 1 bounded result."); }
+  if (scanPanel?.hidden !== true) { renderResults(results, [event.detail]); setStatus("Rendered 1 bounded result."); }
 });
 if (loginPanel) {
   void session().then(() => {
