@@ -18,6 +18,7 @@ export const CONFIDENCE_LEVELS = ["high", "medium", "low"] as const;
 export const SCAN_MODES = ["paste_url", "paste_html", "live_page"] as const;
 export const FRESHNESS_STATES = ["fresh", "stale", "unknown"] as const;
 export const PROVIDER_IDS = ["google_safe_browsing"] as const;
+export const PROVIDER_SOURCES = ["live", "fixture"] as const;
 export const PROVIDER_STATES = [
   "match",
   "no_match",
@@ -38,6 +39,7 @@ export type Confidence = (typeof CONFIDENCE_LEVELS)[number];
 export type ScanMode = (typeof SCAN_MODES)[number];
 export type Freshness = (typeof FRESHNESS_STATES)[number];
 export type ProviderId = (typeof PROVIDER_IDS)[number];
+export type ProviderSource = (typeof PROVIDER_SOURCES)[number];
 export type ProviderState = (typeof PROVIDER_STATES)[number];
 export type ProviderErrorCode = (typeof PROVIDER_ERROR_CODES)[number];
 
@@ -57,6 +59,7 @@ export interface ExtractedLinkCandidate {
 
 export interface ProviderObservation {
   provider: ProviderId;
+  source: ProviderSource;
   queried_target: string;
   observed_at: string;
   expires_at: string | null;
@@ -165,11 +168,12 @@ export function parseProviderObservation(value: unknown): ProviderObservation {
   const path = "provider_observation";
   const data = record(value, path);
   exactKeys(data, [
-    "provider", "queried_target", "observed_at", "expires_at", "freshness",
+    "provider", "source", "queried_target", "observed_at", "expires_at", "freshness",
     "state", "category", "confidence", "reference", "error",
   ], path);
   return {
     provider: literal(data.provider, PROVIDER_IDS, `${path}.provider`),
+    source: literal(data.source, PROVIDER_SOURCES, `${path}.source`),
     queried_target: string(data.queried_target, `${path}.queried_target`),
     observed_at: string(data.observed_at, `${path}.observed_at`),
     expires_at: nullableString(data.expires_at, `${path}.expires_at`),
