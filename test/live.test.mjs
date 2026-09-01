@@ -61,6 +61,7 @@ function page(anchors) {
     URL: "https://watch.example/reference",
     baseURI: "https://watch.example/reference",
     querySelectorAll: (selector) => selector === "a[href]" ? anchors : [],
+    querySelector: (selector) => selector === "#provider-consent" ? { checked: true } : null,
   };
 }
 

@@ -59,9 +59,10 @@ function coordinator(env: Env) {
   }
 }
 
-function googleProvider(env: Env): GoogleSafeBrowsingAdapter {
+function googleProvider(env: Env, request: Request): GoogleSafeBrowsingAdapter {
   return new GoogleSafeBrowsingAdapter(
-    env.GOOGLE_SAFE_BROWSING_ENABLED === "true"
+    env.GOOGLE_SAFE_BROWSING_ENABLED === "true" &&
+      request.headers.get("x-watchdog-provider-consent") === "google_safe_browsing"
       ? env.GOOGLE_SAFE_BROWSING_API_KEY
       : undefined,
   );
@@ -245,7 +246,7 @@ async function pasteScan(request: Request, env: Env): Promise<Response> {
   try {
     const receipt = await executePasteScan(input, {
       store: (result) => storeResult(binding, claims.sid, result),
-      provider: googleProvider(env),
+      provider: googleProvider(env, request),
     });
     return json(receipt, 201);
   } catch {
@@ -273,7 +274,7 @@ async function liveScan(request: Request, env: Env): Promise<Response> {
   try {
     const receipt = await executeLiveScan(input, {
       store: (result) => storeResult(binding, claims.sid, result),
-      provider: googleProvider(env),
+      provider: googleProvider(env, request),
     });
     return json(receipt, 201);
   } catch {

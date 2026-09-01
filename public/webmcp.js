@@ -80,7 +80,7 @@ function validSession(value) {
     new Date(value.expires_at).toISOString() === value.expires_at;
 }
 
-async function authenticatedPost(fetcher, path, payload, signal) {
+async function authenticatedPost(fetcher, path, payload, signal, providerConsent = false) {
   const session = await safeFetch(fetcher, "/api/session", {
     method: "GET", credentials: "same-origin", headers: { accept: "application/json" }, signal,
   });
@@ -93,6 +93,7 @@ async function authenticatedPost(fetcher, path, payload, signal) {
     headers: {
       accept: "application/json", "content-type": "application/json",
       "x-watchdog-csrf": sessionBody.csrf_token,
+      ...(providerConsent ? { "x-watchdog-provider-consent": "google_safe_browsing" } : {}),
     },
     body: JSON.stringify(payload),
   });
@@ -103,7 +104,11 @@ async function authenticatedPost(fetcher, path, payload, signal) {
 
 const REJECTION_REASONS = new Set([
   "empty_input", "missing_base_url", "invalid_url", "unsupported_scheme",
-  "credentials_not_allowed", "disallowed_port", "url_too_long",
+  "credentials_not_allowed", "disallowed_port", "url_too_long", "unsafe_address",
+  "dns_failure", "mixed_address", "redirect_missing_location", "redirect_loop",
+  "redirect_limit", "timeout", "response_too_large", "unsupported_content_type",
+  "unsupported_content_encoding", "fetch_failed", "invalid_response", "input_too_large",
+  "no_candidates",
 ]);
 
 function validCanonicalTarget(value) {
@@ -171,7 +176,7 @@ function validReceipt(value) {
     ));
 }
 
-export async function inspectCurrentPage({ pageDocument, fetcher, signal }) {
+export async function inspectCurrentPage({ pageDocument, fetcher, signal, providerConsent = false }) {
   signal?.throwIfAborted();
   const observedAt = new Date().toISOString();
   const extraction = extractRenderedPage(pageDocument, observedAt);
@@ -179,21 +184,36 @@ export async function inspectCurrentPage({ pageDocument, fetcher, signal }) {
     document_url: pageDocument.URL,
     observed_at: observedAt,
     ...extraction,
-  }, signal);
+  }, signal, providerConsent);
   if (!validReceipt(body)) throw new Error("malformed_response");
   return JSON.stringify(body);
 }
 
 function validPasteReceipt(value) {
-  return isRecord(value) && ["paste_url", "paste_html"].includes(value.mode) &&
+  const integer = (item) => Number.isSafeInteger(item) && item >= 0;
+  const evidence = value?.fetch_evidence;
+  const validFetch = evidence === null || (isRecord(evidence) && exactKeys(evidence,
+    ["final_url", "redirect_chain", "requested_url", "validated_hops"]) &&
+    validCanonicalTarget(evidence.requested_url) && validCanonicalTarget(evidence.final_url) &&
+    Array.isArray(evidence.redirect_chain) && evidence.redirect_chain.length <= 5 &&
+    evidence.redirect_chain.every(validCanonicalTarget) && Array.isArray(evidence.validated_hops) &&
+    evidence.validated_hops.length <= 6 && evidence.validated_hops.every((hop) => isRecord(hop) &&
+      exactKeys(hop, ["address_count", "hostname"]) && typeof hop.hostname === "string" &&
+      hop.hostname.length <= 253 && integer(hop.address_count) && hop.address_count <= 128));
+  const count = Math.max(1, (value?.accepted_targets ?? 0) + (value?.rejected_candidates ?? 0));
+  return isRecord(value) && exactKeys(value, ["accepted_targets", "fetch_evidence", "mode",
+    "rejected_candidates", "scan_ids", "truncated", "unscannable_reason"]) &&
+    ["paste_url", "paste_html"].includes(value.mode) &&
     Array.isArray(value.scan_ids) && value.scan_ids.length <= 16 &&
     value.scan_ids.every((id) => typeof id === "string" && /^[a-f0-9]{32}$/u.test(id)) &&
-    Number.isSafeInteger(value.accepted_targets) && value.accepted_targets >= 0 &&
-    Number.isSafeInteger(value.rejected_candidates) && value.rejected_candidates >= 0 &&
-    typeof value.truncated === "boolean";
+    new Set(value.scan_ids).size === value.scan_ids.length && integer(value.accepted_targets) &&
+    integer(value.rejected_candidates) && value.scan_ids.length === Math.min(count, 16) &&
+    value.truncated === (count > 16) &&
+    (value.unscannable_reason === null || REJECTION_REASONS.has(value.unscannable_reason)) &&
+    validFetch && (value.mode === "paste_url" || evidence === null);
 }
 
-export async function scanUrl({ fetcher, targetUrl, pastedHtml, baseUrl, signal }) {
+export async function scanUrl({ fetcher, targetUrl, pastedHtml, baseUrl, signal, providerConsent = false }) {
   signal?.throwIfAborted();
   if (typeof targetUrl !== "string" || targetUrl.length === 0 || targetUrl.length > 2048 ||
     (pastedHtml !== undefined && (typeof pastedHtml !== "string" || pastedHtml.length > 200_000)) ||
@@ -203,7 +223,7 @@ export async function scanUrl({ fetcher, targetUrl, pastedHtml, baseUrl, signal 
   const payload = pastedHtml === undefined
     ? { mode: "url", url: targetUrl }
     : { mode: "html", html: pastedHtml, base_url: baseUrl ?? targetUrl };
-  const body = await authenticatedPost(fetcher, "/api/scans/paste", payload, signal);
+  const body = await authenticatedPost(fetcher, "/api/scans/paste", payload, signal, providerConsent);
   if (!validPasteReceipt(body)) throw new Error("malformed_response");
   return JSON.stringify(body);
 }
@@ -218,9 +238,41 @@ export async function getScanResult({ fetcher, scanId, signal }) {
   });
   const body = await jsonResponse(response);
   if (!response.ok) throw typedError(response.status, body);
-  if (!isRecord(body) || body.status !== "ok" || !isRecord(body.result) ||
-    body.result.scan_id !== scanId) throw new Error("malformed_response");
+  if (!isRecord(body) || !exactKeys(body, ["result", "status"]) || body.status !== "ok" ||
+    !validScanResult(body.result, scanId)) throw new Error("malformed_response");
   return JSON.stringify(body.result);
+}
+
+const RESULT_KEYS = ["analysis_state", "canonical_target", "confidence", "contradicting_evidence",
+  "limitations", "mode", "provider_observations", "risk_label", "scan_id", "supporting_evidence"];
+const literals = (value, allowed) => typeof value === "string" && allowed.includes(value);
+const bounded = (value, maximum = 2048) => typeof value === "string" && value.length <= maximum;
+const timestamp = (value, nullable = false) => (nullable && value === null) ||
+  (bounded(value, 32) && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value);
+function validScanResult(value, scanId) {
+  const evidence = (item) => isRecord(item) && exactKeys(item,
+    ["category", "freshness", "observed_at", "reference", "source", "target"]) &&
+    bounded(item.source, 128) && bounded(item.target) && bounded(item.category, 512) &&
+    timestamp(item.observed_at) && literals(item.freshness, ["fresh", "stale", "unknown"]) &&
+    (item.reference === null || bounded(item.reference));
+  const provider = (item) => isRecord(item) && exactKeys(item, ["category", "confidence", "error",
+    "expires_at", "freshness", "observed_at", "provider", "queried_target", "reference", "source", "state"]) &&
+    item.provider === "google_safe_browsing" && literals(item.source, ["live", "fixture"]) &&
+    validCanonicalTarget(item.queried_target) && timestamp(item.observed_at) && timestamp(item.expires_at, true) &&
+    literals(item.freshness, ["fresh", "stale", "unknown"]) &&
+    literals(item.state, ["match", "no_match", "error", "not_configured"]) &&
+    (item.category === null || bounded(item.category, 512)) && literals(item.confidence, ["high", "medium", "low"]) &&
+    (item.reference === null || bounded(item.reference)) && (item.error === null || literals(item.error,
+      ["timeout", "quota", "unavailable", "malformed_response", "not_configured"]));
+  const array = (items, check) => Array.isArray(items) && items.length <= 16 && items.every(check);
+  return isRecord(value) && exactKeys(value, RESULT_KEYS) && value.scan_id === scanId &&
+    literals(value.mode, ["paste_url", "paste_html", "live_page"]) &&
+    (value.canonical_target === null || validCanonicalTarget(value.canonical_target)) &&
+    literals(value.risk_label, ["known_malicious", "suspicious", "no_known_match", "unknown"]) &&
+    literals(value.analysis_state, ["complete", "unknown", "unscannable", "provider_error", "stale", "conflicting"]) &&
+    literals(value.confidence, ["high", "medium", "low"]) && array(value.supporting_evidence, evidence) &&
+    array(value.contradicting_evidence, evidence) && array(value.provider_observations, provider) &&
+    array(value.limitations, (item) => bounded(item, 512));
 }
 
 export function createInspectCurrentPageTool(pageDocument, fetcher) {
@@ -242,7 +294,10 @@ export function createInspectCurrentPageTool(pageDocument, fetcher) {
         typeof argumentsObject !== "object" || argumentsObject === null ||
         Array.isArray(argumentsObject) || Object.keys(argumentsObject).length !== 0
       ) throw new Error("invalid_arguments");
-      const output = await inspectCurrentPage({ pageDocument, fetcher, signal: context.signal });
+      if (!consented(pageDocument)) throw new Error("provider_consent_required");
+      const output = await inspectCurrentPage({
+        pageDocument, fetcher, signal: context.signal, providerConsent: true,
+      });
       const Event = pageDocument.defaultView?.CustomEvent;
       if (typeof pageDocument.dispatchEvent === "function" && typeof Event === "function") {
         pageDocument.dispatchEvent(new Event("watchdog:scan-receipt", { detail: JSON.parse(output) }));
@@ -252,7 +307,18 @@ export function createInspectCurrentPageTool(pageDocument, fetcher) {
   };
 }
 
-export function createSupportingTools(fetcher) {
+function dispatch(pageDocument, type, detail) {
+  const Event = pageDocument?.defaultView?.CustomEvent;
+  if (typeof pageDocument?.dispatchEvent === "function" && typeof Event === "function") {
+    pageDocument.dispatchEvent(new Event(type, { detail }));
+  }
+}
+
+function consented(pageDocument) {
+  return pageDocument?.querySelector?.("#provider-consent")?.checked === true;
+}
+
+export function createSupportingTools(fetcher, pageDocument) {
   return [
     {
       name: "scan_url", title: "Scan a URL or pasted HTML",
@@ -266,10 +332,13 @@ export function createSupportingTools(fetcher) {
         },
       },
       annotations: { readOnlyHint: true, untrustedContentHint: true },
-      execute(args = {}, context = {}) {
+      async execute(args = {}, context = {}) {
         if (!isRecord(args) || Object.keys(args).some((key) =>
           !["targetUrl", "pastedHtml", "baseUrl"].includes(key))) throw new Error("invalid_arguments");
-        return scanUrl({ fetcher, ...args, signal: context.signal });
+        if (!consented(pageDocument)) throw new Error("provider_consent_required");
+        const output = await scanUrl({ fetcher, ...args, signal: context.signal, providerConsent: true });
+        dispatch(pageDocument, "watchdog:scan-receipt", JSON.parse(output));
+        return output;
       },
     },
     {
@@ -280,9 +349,11 @@ export function createSupportingTools(fetcher) {
         properties: { scanId: { type: "string", pattern: "^[a-f0-9]{32}$", description: "Opaque session-owned scan identifier." } },
       },
       annotations: { readOnlyHint: true, untrustedContentHint: true },
-      execute(args = {}, context = {}) {
+      async execute(args = {}, context = {}) {
         if (!isRecord(args) || !exactKeys(args, ["scanId"])) throw new Error("invalid_arguments");
-        return getScanResult({ fetcher, scanId: args.scanId, signal: context.signal });
+        const output = await getScanResult({ fetcher, scanId: args.scanId, signal: context.signal });
+        dispatch(pageDocument, "watchdog:scan-result", JSON.parse(output));
+        return output;
       },
     },
   ];
@@ -300,8 +371,13 @@ export async function registerBrowserTool() {
   }
   const controller = new AbortController();
   const fetcher = globalThis.fetch.bind(globalThis);
-  const tools = [createInspectCurrentPageTool(document, fetcher), ...createSupportingTools(fetcher)];
-  for (const tool of tools) await document.modelContext.registerTool(tool, { signal: controller.signal });
+  const tools = [createInspectCurrentPageTool(document, fetcher), ...createSupportingTools(fetcher, document)];
+  try {
+    for (const tool of tools) await document.modelContext.registerTool(tool, { signal: controller.signal });
+  } catch (error) {
+    controller.abort();
+    throw error;
+  }
   renderStatus(document, "WebMCP tools registered: inspect_current_page, scan_url, get_scan_result.");
   return controller;
 }

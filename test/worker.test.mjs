@@ -188,6 +188,12 @@ test("actual Worker gates and composes the live provider for both scan routes", 
     assert.equal(providerCalls.length, 0);
 
     env.GOOGLE_SAFE_BROWSING_ENABLED = "true";
+    const unconsented = await submit("/api/scans/paste", {
+      mode: "html", base_url: "https://paste.example/", html: '<a href="/unconsented">x</a>',
+    });
+    assert.equal(unconsented.provider_observations[0].state, "not_configured");
+    assert.equal(providerCalls.length, 0);
+    headers["x-watchdog-provider-consent"] = "google_safe_browsing";
     const paste = await submit("/api/scans/paste", {
       mode: "html", base_url: "https://paste.example/", html: '<a href="/enabled">x</a>',
     });
