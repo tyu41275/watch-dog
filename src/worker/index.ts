@@ -287,6 +287,11 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     return json({ error: "not_configured" }, 503);
   }
 
+  if (url.pathname === "/reference.html" && request.method === "GET") {
+    url.pathname = "/reference";
+    return Response.redirect(url, 308);
+  }
+
   if (env.ASSETS) {
     if (url.pathname === "/reference" && request.method === "GET") {
       const assetUrl = new URL(request.url);

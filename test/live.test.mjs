@@ -240,7 +240,7 @@ test("the fixed Worker route requires session, origin, and CSRF then stores owne
   assert.equal(rejectedReceipt.accepted_targets, 0);
 });
 
-test("the fixed reference route rewrites only the asset request", async () => {
+test("the fixed reference route rewrites only the asset request and canonicalizes direct access", async () => {
   const seen = [];
   const env = { ASSETS: { fetch: async (request) => {
     seen.push(request.url);
@@ -248,6 +248,10 @@ test("the fixed reference route rewrites only the asset request", async () => {
   } } };
   assert.equal(await (await worker.fetch(new Request("https://watch.example/reference"), env)).text(),
     "reference asset");
+  assert.deepEqual(seen, ["https://watch.example/reference.html"]);
+  const direct = await worker.fetch(new Request("https://watch.example/reference.html?probe=1"), env);
+  assert.equal(direct.status, 308);
+  assert.equal(direct.headers.get("location"), "https://watch.example/reference?probe=1");
   assert.deepEqual(seen, ["https://watch.example/reference.html"]);
 });
 
@@ -346,6 +350,17 @@ test("malformed and transport failures use the closed browser error vocabulary",
   await assert.rejects(inspectCurrentPage({
     pageDocument: page([]), fetcher: async () => { throw new TypeError("network down"); },
   }), /service_unavailable/);
+  for (const malformedTransport of [null, 7, { ok: true }]) {
+    for (const phase of ["session", "scan"]) {
+      let calls = 0;
+      await assert.rejects(inspectCurrentPage({
+        pageDocument: page([]),
+        fetcher: async () => ++calls === 1 && phase === "scan"
+          ? sessionResponse()
+          : malformedTransport,
+      }), /service_unavailable/);
+    }
+  }
   for (const malformedScan of [
     new Response("not json", { status: 200 }),
     Response.json({ oops: true }),
@@ -353,6 +368,13 @@ test("malformed and transport failures use the closed browser error vocabulary",
     receiptResponse({ scan_ids: [["a".repeat(32)]] }),
     receiptResponse({ targets: [null] }),
     receiptResponse({ rejections: [null] }),
+    receiptResponse({
+      targets: [{
+        canonical_url: "https://watch.example/one",
+        occurrence_indices: [0],
+        anchor_text_variants: Array(10_000).fill("one"),
+      }],
+    }),
     receiptResponse({
       targets: [{
         canonical_url: "https://watch.example/one",

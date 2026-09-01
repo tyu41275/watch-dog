@@ -54,7 +54,9 @@ async function jsonResponse(response) {
 
 async function safeFetch(fetcher, resource, init) {
   try {
-    return await fetcher(resource, init);
+    const response = await fetcher(resource, init);
+    if (!(response instanceof Response)) throw new Error("service_unavailable");
+    return response;
   } catch (error) {
     if (error?.name === "AbortError") throw error;
     throw new Error("service_unavailable");
@@ -116,8 +118,12 @@ function validReceipt(value) {
   ]) && validCanonicalTarget(target.canonical_url) &&
     Array.isArray(target.occurrence_indices) && target.occurrence_indices.length > 0 &&
     target.occurrence_indices.every((index) => integer(index) && index < WEBMCP_LIMITS.maxCandidates) &&
-    Array.isArray(target.anchor_text_variants) && target.anchor_text_variants.every((text) =>
-      typeof text === "string" && text.length <= WEBMCP_LIMITS.maxAnchorTextChars);
+    Array.isArray(target.anchor_text_variants) &&
+    target.anchor_text_variants.length <= target.occurrence_indices.length &&
+    target.anchor_text_variants.every((text) =>
+      typeof text === "string" && text !== "" && text === text.trim() &&
+      text.length <= WEBMCP_LIMITS.maxAnchorTextChars) &&
+    new Set(target.anchor_text_variants).size === target.anchor_text_variants.length;
   const validRejection = (rejection) => isRecord(rejection) &&
     exactKeys(rejection, ["occurrence_index", "reason"]) &&
     integer(rejection.occurrence_index) && rejection.occurrence_index < WEBMCP_LIMITS.maxCandidates &&
