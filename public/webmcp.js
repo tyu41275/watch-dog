@@ -55,9 +55,11 @@ async function jsonResponse(response) {
 async function safeFetch(fetcher, resource, init) {
   try {
     const response = await fetcher(resource, init);
+    init?.signal?.throwIfAborted();
     if (!(response instanceof Response)) throw new Error("service_unavailable");
     return response;
   } catch (error) {
+    if (init?.signal?.aborted) init.signal.throwIfAborted();
     if (error?.name === "AbortError") throw error;
     throw new Error("service_unavailable");
   }
@@ -98,6 +100,7 @@ async function authenticatedPost(fetcher, path, payload, signal, providerConsent
     body: JSON.stringify(payload),
   });
   const body = await jsonResponse(response);
+  signal?.throwIfAborted();
   if (!response.ok) throw typedError(response.status, body);
   return body;
 }
@@ -192,25 +195,24 @@ export async function inspectCurrentPage({ pageDocument, fetcher, signal, provid
 function validPasteReceipt(value) {
   const integer = (item) => Number.isSafeInteger(item) && item >= 0;
   const evidence = value?.fetch_evidence;
+  const traceUrl = (item) => item === "" || validCanonicalTarget(item);
   const validFetch = evidence === null || (isRecord(evidence) && exactKeys(evidence,
-    ["final_url", "redirect_chain", "requested_url", "validated_hops"]) &&
-    validCanonicalTarget(evidence.requested_url) && validCanonicalTarget(evidence.final_url) &&
-    Array.isArray(evidence.redirect_chain) && evidence.redirect_chain.length <= 5 &&
+    ["final_url", "redirect_chain", "requested_url", "validated_hops"]) && traceUrl(evidence.requested_url) &&
+    traceUrl(evidence.final_url) && Array.isArray(evidence.redirect_chain) && evidence.redirect_chain.length <= 5 &&
     evidence.redirect_chain.every(validCanonicalTarget) && Array.isArray(evidence.validated_hops) &&
     evidence.validated_hops.length <= 6 && evidence.validated_hops.every((hop) => isRecord(hop) &&
       exactKeys(hop, ["address_count", "hostname"]) && typeof hop.hostname === "string" &&
       hop.hostname.length <= 253 && integer(hop.address_count) && hop.address_count <= 128));
-  const count = Math.max(1, (value?.accepted_targets ?? 0) + (value?.rejected_candidates ?? 0));
-  return isRecord(value) && exactKeys(value, ["accepted_targets", "fetch_evidence", "mode",
-    "rejected_candidates", "scan_ids", "truncated", "unscannable_reason"]) &&
-    ["paste_url", "paste_html"].includes(value.mode) &&
+  const total = (value?.accepted_targets ?? 0) + (value?.rejected_candidates ?? 0); const count = Math.max(1, total);
+  return isRecord(value) && exactKeys(value, ["accepted_targets", "fetch_evidence", "mode", "rejected_candidates",
+    "scan_ids", "truncated", "unscannable_reason"]) && ["paste_url", "paste_html"].includes(value.mode) &&
     Array.isArray(value.scan_ids) && value.scan_ids.length <= 16 &&
     value.scan_ids.every((id) => typeof id === "string" && /^[a-f0-9]{32}$/u.test(id)) &&
     new Set(value.scan_ids).size === value.scan_ids.length && integer(value.accepted_targets) &&
-    integer(value.rejected_candidates) && value.scan_ids.length === Math.min(count, 16) &&
-    value.truncated === (count > 16) &&
+    integer(value.rejected_candidates) && total <= 256 && value.scan_ids.length === Math.min(count, 16) && value.truncated === (count > 16) &&
     (value.unscannable_reason === null || REJECTION_REASONS.has(value.unscannable_reason)) &&
-    validFetch && (value.mode === "paste_url" || evidence === null);
+    (total === 0) === (value.unscannable_reason !== null) && validFetch && (value.mode === "paste_url") === (evidence !== null) &&
+    (total === 0 || evidence === null || (evidence.requested_url !== "" && evidence.final_url !== ""));
 }
 
 export async function scanUrl({ fetcher, targetUrl, pastedHtml, baseUrl, signal, providerConsent = false }) {
@@ -237,6 +239,7 @@ export async function getScanResult({ fetcher, scanId, signal }) {
     method: "GET", credentials: "same-origin", headers: { accept: "application/json" }, signal,
   });
   const body = await jsonResponse(response);
+  signal?.throwIfAborted();
   if (!response.ok) throw typedError(response.status, body);
   if (!isRecord(body) || !exactKeys(body, ["result", "status"]) || body.status !== "ok" ||
     !validScanResult(body.result, scanId)) throw new Error("malformed_response");
@@ -250,27 +253,38 @@ const bounded = (value, maximum = 2048) => typeof value === "string" && value.le
 const timestamp = (value, nullable = false) => (nullable && value === null) ||
   (bounded(value, 32) && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value);
 function validScanResult(value, scanId) {
-  const evidence = (item) => isRecord(item) && exactKeys(item,
-    ["category", "freshness", "observed_at", "reference", "source", "target"]) &&
-    bounded(item.source, 128) && bounded(item.target) && bounded(item.category, 512) &&
-    timestamp(item.observed_at) && literals(item.freshness, ["fresh", "stale", "unknown"]) &&
-    (item.reference === null || bounded(item.reference));
-  const provider = (item) => isRecord(item) && exactKeys(item, ["category", "confidence", "error",
-    "expires_at", "freshness", "observed_at", "provider", "queried_target", "reference", "source", "state"]) &&
-    item.provider === "google_safe_browsing" && literals(item.source, ["live", "fixture"]) &&
-    validCanonicalTarget(item.queried_target) && timestamp(item.observed_at) && timestamp(item.expires_at, true) &&
+  const categories = ["malware", "social_engineering", "unwanted_software", "potentially_harmful_application"];
+  const evidence = (item) => isRecord(item) && exactKeys(item, ["category", "freshness", "observed_at", "reference", "source", "target"]) &&
+    literals(item.source, ["live:google_safe_browsing", "fixture:google_safe_browsing",
+      "candidate:paste_url", "candidate:paste_html", "candidate:live_page"]) &&
+    item.target === value?.canonical_target && validCanonicalTarget(item.target) &&
+    literals(item.category, [...categories, "no_known_match", "misleading_url_like_text"]) && timestamp(item.observed_at) &&
     literals(item.freshness, ["fresh", "stale", "unknown"]) &&
-    literals(item.state, ["match", "no_match", "error", "not_configured"]) &&
-    (item.category === null || bounded(item.category, 512)) && literals(item.confidence, ["high", "medium", "low"]) &&
-    (item.reference === null || bounded(item.reference)) && (item.error === null || literals(item.error,
-      ["timeout", "quota", "unavailable", "malformed_response", "not_configured"]));
+    (item.reference === null || bounded(item.reference));
+  const provider = (item) => {
+    if (!isRecord(item) || !exactKeys(item, ["category", "confidence", "error", "expires_at",
+      "freshness", "observed_at", "provider", "queried_target", "reference", "source", "state"]) ||
+      item.provider !== "google_safe_browsing" || !literals(item.source, ["live", "fixture"]) ||
+      item.queried_target !== value?.canonical_target || !validCanonicalTarget(item.queried_target) ||
+      !timestamp(item.observed_at) || !timestamp(item.expires_at, true) ||
+      !literals(item.freshness, ["fresh", "stale", "unknown"]) ||
+      !literals(item.state, ["match", "no_match", "error", "not_configured"]) ||
+      (item.reference !== null && !bounded(item.reference))) return false;
+    if (item.state === "match" || item.state === "no_match") return item.error === null &&
+      (item.state === "match" ? literals(item.category, categories) : item.category === null) && (item.expires_at === null ? item.freshness === "unknown" :
+      Date.parse(item.expires_at) >= Date.parse(item.observed_at) && item.freshness !== "unknown") &&
+      item.confidence === (item.freshness === "fresh" ? "medium" : "low");
+    return item.category === null && item.expires_at === null && item.freshness === "unknown" &&
+      item.confidence === "low" && item.reference === null &&
+      (item.state === "not_configured" ? item.error === "not_configured" : literals(item.error, ["timeout", "quota", "unavailable", "malformed_response"]));
+  };
   const array = (items, check) => Array.isArray(items) && items.length <= 16 && items.every(check);
-  return isRecord(value) && exactKeys(value, RESULT_KEYS) && value.scan_id === scanId &&
-    literals(value.mode, ["paste_url", "paste_html", "live_page"]) &&
+  return isRecord(value) && exactKeys(value, RESULT_KEYS) && value.scan_id === scanId && literals(value.mode, ["paste_url", "paste_html", "live_page"]) &&
     (value.canonical_target === null || validCanonicalTarget(value.canonical_target)) &&
+    (value.canonical_target === null) === (value.analysis_state === "unscannable") &&
     literals(value.risk_label, ["known_malicious", "suspicious", "no_known_match", "unknown"]) &&
-    literals(value.analysis_state, ["complete", "unknown", "unscannable", "provider_error", "stale", "conflicting"]) &&
-    literals(value.confidence, ["high", "medium", "low"]) && array(value.supporting_evidence, evidence) &&
+    literals(value.analysis_state, ["complete", "unknown", "unscannable", "provider_error", "stale", "conflicting"]) && literals(value.confidence, ["high", "medium", "low"]) &&
+    array(value.supporting_evidence, evidence) &&
     array(value.contradicting_evidence, evidence) && array(value.provider_observations, provider) &&
     array(value.limitations, (item) => bounded(item, 512));
 }

@@ -1,9 +1,7 @@
 import { defineConfig } from "@playwright/test";
-
 const port = 8787; const channel = process.env.WATCHDOG_BROWSER_CHANNEL;
 const baseURL = `https://127.0.0.1:${port}`;
 const runId = process.env.WATCHDOG_EVIDENCE_ID ?? new Date().toISOString().replaceAll(/[:.]/gu, "-");
-
 export default defineConfig({
   testDir: "./e2e",
   testIgnore: "**/recording.spec.mjs",

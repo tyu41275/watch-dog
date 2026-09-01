@@ -1,6 +1,5 @@
 import { test } from "@playwright/test";
 import { scanPastedHtml, signIn } from "./journey.mjs";
-
 test("operator-invoked headed rehearsal reuses the asserted journey", async ({ page }, testInfo) => {
   await signIn(page);
   await scanPastedHtml(page, "<a href='https://example.com/security'>Example evidence</a>");

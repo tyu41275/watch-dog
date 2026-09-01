@@ -32,7 +32,7 @@ function providerList(observations) {
   for (const item of Array.isArray(observations) ? observations.slice(0, MAX_ITEMS) : []) {
     list.append(element("li", "", [item?.provider, item?.state, item?.freshness,
       item?.category, item?.error, item?.reference,
-      item?.provider === "google_safe_browsing" && item?.state === "match"
+      item?.provider === "google_safe_browsing" && item?.source === "live" && item?.state === "match"
         ? "Advisory provided by Google" : null]
       .filter(Boolean).map((value) => text(value, 2048)).join(" · ")));
   }

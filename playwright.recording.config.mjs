@@ -1,8 +1,6 @@
 import base from "./playwright.config.mjs";
-
 const recordingId = process.env.WATCHDOG_RECORDING_ID ??
   new Date().toISOString().replaceAll(/[:.]/gu, "-");
-
 export default {
   ...base,
   testIgnore: undefined,

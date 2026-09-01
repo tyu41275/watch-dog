@@ -9,13 +9,10 @@ test("real Worker and browser seam completes the protected two-mode journey", as
       configurable: true, get: () => ({ registerTool: async (tool) => globalThis.__watchDogTools.push(tool) }),
     });
   });
-  await page.goto("/");
-  await page.getByLabel("Username").fill("wrong"); await page.getByLabel("Password").fill("wrong");
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.locator("#app-status")).toHaveText("invalid_credentials");
+  await page.goto("/"); await page.getByLabel("Username").fill("wrong"); await page.getByLabel("Password").fill("wrong");
+  await page.getByRole("button", { name: "Sign in" }).click(); await expect(page.locator("#app-status")).toHaveText("invalid_credentials");
   await page.getByLabel("Username").fill(judge.username); await page.getByLabel("Password").fill(judge.password);
-  const loginResponse = page.waitForResponse((response) => response.url().endsWith("/api/login"));
-  await page.getByRole("button", { name: "Sign in" }).click();
+  const loginResponse = page.waitForResponse((response) => response.url().endsWith("/api/login")); await page.getByRole("button", { name: "Sign in" }).click();
   expect((await loginResponse).status()).toBe(200);
   await expect(page.locator("#scan-panel")).toBeVisible();
   const cookie = (await context.cookies()).find(({ name }) => name === "__Host-watchdog_session");
@@ -35,13 +32,14 @@ test("real Worker and browser seam completes the protected two-mode journey", as
   expect(await page.evaluate(() => globalThis.__watchDogXss)).toBe(0); expect(await page.locator("#results img, #results svg, #results script").count()).toBe(0);
   await page.evaluate(async () => {
     const { renderResults } = await import("/results.js");
-    renderResults(document.querySelector("#results"), [{
+    globalThis.__renderProvider = (source) => renderResults(document.querySelector("#results"), [{
       scan_id: "f".repeat(32), canonical_target: "https://example.com/", risk_label: "known_malicious",
       analysis_state: "complete", confidence: "high", supporting_evidence: [], contradicting_evidence: [],
-      limitations: [], provider_observations: [{ provider: "google_safe_browsing", state: "match",
+      limitations: [], provider_observations: [{ provider: "google_safe_browsing", source, state: "match",
         freshness: "fresh", category: "malware", reference: "https://advisory.example/reference" }],
-    }]);
+    }]); globalThis.__renderProvider("fixture");
   });
+  await expect(page.locator(".result-card")).not.toContainText("Advisory provided by Google"); await page.evaluate(() => globalThis.__renderProvider("live"));
   await expect(page.locator(".result-card")).toContainText("Advisory provided by Google"); await expect(page.locator(".result-card")).toContainText("https://advisory.example/reference");
   await page.getByLabel("HTTP(S) URL").fill("http://127.0.0.1/");
   await page.getByRole("button", { name: "Scan URL" }).click(); await expect(page.locator(".result-card").first()).toContainText("unscannable");
@@ -63,8 +61,7 @@ test("real Worker and browser seam completes the protected two-mode journey", as
   await expect(page.locator("#results")).toBeHidden();
   await page.unroute("**/api/results/*"); await signIn(page);
   await page.goto("/reference"); await page.locator("#provider-consent").check();
-  const before = await page.locator("#reference-links a").count();
-  await expect(page.locator("#delayed-live-anchor")).toBeVisible();
+  const before = await page.locator("#reference-links a").count(); await expect(page.locator("#delayed-live-anchor")).toBeVisible();
   expect(await page.locator("#reference-links a").count()).toBe(before + 1);
   const shimmed = await page.evaluate(() => globalThis.__watchDogShimmedWebMcp);
   if (shimmed) await expect.poll(() => page.evaluate(() => globalThis.__watchDogTools.map(({ name }) => name)))
@@ -74,13 +71,11 @@ test("real Worker and browser seam completes the protected two-mode journey", as
   if (shimmed) await page.evaluate(() => globalThis.__watchDogTools
     .find(({ name }) => name === "inspect_current_page").execute({}));
   else await page.getByRole("button", { name: "Inspect current rendered anchors" }).click();
-  const liveBody = JSON.parse((await liveRequest).postData());
-  expect(liveBody.candidates.some(({ raw_href }) => raw_href === "./delayed-evidence")).toBe(true);
+  const liveBody = JSON.parse((await liveRequest).postData()); expect(liveBody.candidates.some(({ raw_href }) => raw_href === "./delayed-evidence")).toBe(true);
   expect(await page.locator("#delayed-live-anchor").evaluate((anchor) => anchor.href))
     .toBe(`${new URL(page.url()).origin}/delayed-evidence`);
   await expect(page.locator(".result-grid")).toContainText("disallowed_port"); await expect(page.locator(".result-grid")).toContainText("unsupported_scheme");
   await expect(page.locator(".result-grid")).toContainText("misleading_url_like_text");
-
   if (shimmed) {
     registered.push(...await page.evaluate(() => globalThis.__watchDogTools.map((tool) => ({
       name: tool.name, schema: tool.inputSchema, annotations: tool.annotations,
@@ -94,5 +89,7 @@ test("real Worker and browser seam completes the protected two-mode journey", as
     await page.evaluate((id) => globalThis.__watchDogTools
       .find(({ name }) => name === "get_scan_result").execute({ scanId: id }), scanId);
     await expect(page.locator(".result-card").first()).toHaveAttribute("data-scan-id", scanId);
+    await page.evaluate(async () => { const state = await fetch("/api/session").then((response) => response.json()); await fetch("/api/logout", { method: "POST", headers: { "x-watchdog-csrf": state.csrf_token } });
+      document.dispatchEvent(new CustomEvent("watchdog:scan-result", { detail: { scan_id: "e".repeat(32) } })); }); await expect(page.locator("#results")).toBeHidden();
   }
 });
