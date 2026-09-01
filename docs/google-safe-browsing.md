@@ -45,6 +45,12 @@ observation, stored result, error message, or committed configuration. There is
 no fallback key. Missing configuration becomes a typed live-source
 `not_configured` observation.
 
+The Worker also requires `GOOGLE_SAFE_BROWSING_ENABLED` to equal the exact
+string `true`; absent, false, or any other value keeps lookups disabled even if
+the secret exists. Do not set it until the deployed scan UI conspicuously names
+Google, discloses raw-URL submission, links the applicable terms and privacy
+information, and makes deliberate scan submission the user's consent action.
+
 The current adapter performs one request per retained canonical target. Each
 request has a 2.5-second timeout and a 64,000-byte response cap. It accepts only
 the documented closed JSON shape and these threat enums:
@@ -67,7 +73,8 @@ use `source: live`.
 For local feature work, place the key only in an ignored `.dev.vars` file. For
 Cloudflare, configure it as a Worker secret. The repository secret is named
 `GOOGLE_SAFE_BROWSING_API_KEY`; deployment wiring remains owned by the deployment
-node.
+node. Keep `GOOGLE_SAFE_BROWSING_ENABLED` absent or false until the disclosure UI
+and exact deployed revision have passed their own gates.
 
 Unit and shimmed HTTP tests do not satisfy the live-provider gate. Before
 activation, run one sanitized permitted lookup against the exact deployed

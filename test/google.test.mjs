@@ -144,17 +144,15 @@ test("HTTP, network, timeout and invalid transport failures normalize without pa
   });
   assert.deepEqual(await hanging.observe(request), expectedError("timeout"));
 
+  let bodyCancelled = false;
   const hangingBody = new GoogleSafeBrowsingAdapter("key", {
     timeout_ms: 1,
-    fetcher: async (_input, init) => new Response(new ReadableStream({
-      start(controller) {
-        init.signal.addEventListener("abort", () => controller.error(init.signal.reason), {
-          once: true,
-        });
-      },
+    fetcher: async () => new Response(new ReadableStream({
+      cancel() { bodyCancelled = true; },
     }), { headers: { "content-type": "application/json" } }),
   });
   assert.deepEqual(await hangingBody.observe(request), expectedError("timeout"));
+  assert.equal(bodyCancelled, true);
 });
 
 test("response parsing fails closed on malformed, oversized and open provider shapes", async () => {
@@ -166,6 +164,7 @@ test("response parsing fails closed on malformed, oversized and open provider sh
     json({ threats: [] }),
     json({ threats: [], cacheDuration: "1m" }),
     json({ threats: [], cacheDuration: "01s" }),
+    json({ threats: null, cacheDuration: "1s" }),
     json({ threats: [], cacheDuration: "1s", rawPayload: "secret" }),
     json({ threats: [{ ...validThreat, rawPayload: "secret" }], cacheDuration: "1s" }),
     json({ threats: [{ url: "not a URL", threatTypes: ["MALWARE"] }], cacheDuration: "1s" }),
@@ -173,6 +172,8 @@ test("response parsing fails closed on malformed, oversized and open provider sh
       cacheDuration: "1s" }),
     json({ threats: [{ url: canonicalTarget, threatTypes: [] }], cacheDuration: "1s" }),
     json({ threats: [{ url: canonicalTarget, threatTypes: ["UNKNOWN"] }], cacheDuration: "1s" }),
+    ...["toString", "constructor", "__proto__"].map((type) =>
+      json({ threats: [{ url: canonicalTarget, threatTypes: [type] }], cacheDuration: "1s" })),
     json({
       threats: Array(GOOGLE_SAFE_BROWSING.max_threats + 1).fill(validThreat),
       cacheDuration: "1s",

@@ -35,6 +35,7 @@ export interface Env {
   ADMIN_USERNAME?: string;
   ADMIN_PASSWORD?: string;
   SESSION_SIGNING_KEY?: string;
+  GOOGLE_SAFE_BROWSING_ENABLED?: string;
   GOOGLE_SAFE_BROWSING_API_KEY?: string;
   SESSION_COORDINATOR?: CoordinatorNamespace;
 }
@@ -56,6 +57,14 @@ function coordinator(env: Env) {
   } catch {
     return undefined;
   }
+}
+
+function googleProvider(env: Env): GoogleSafeBrowsingAdapter {
+  return new GoogleSafeBrowsingAdapter(
+    env.GOOGLE_SAFE_BROWSING_ENABLED === "true"
+      ? env.GOOGLE_SAFE_BROWSING_API_KEY
+      : undefined,
+  );
 }
 
 async function boundedText(request: Request, maximum: number): Promise<string | null> {
@@ -236,7 +245,7 @@ async function pasteScan(request: Request, env: Env): Promise<Response> {
   try {
     const receipt = await executePasteScan(input, {
       store: (result) => storeResult(binding, claims.sid, result),
-      provider: new GoogleSafeBrowsingAdapter(env.GOOGLE_SAFE_BROWSING_API_KEY),
+      provider: googleProvider(env),
     });
     return json(receipt, 201);
   } catch {
@@ -264,7 +273,7 @@ async function liveScan(request: Request, env: Env): Promise<Response> {
   try {
     const receipt = await executeLiveScan(input, {
       store: (result) => storeResult(binding, claims.sid, result),
-      provider: new GoogleSafeBrowsingAdapter(env.GOOGLE_SAFE_BROWSING_API_KEY),
+      provider: googleProvider(env),
     });
     return json(receipt, 201);
   } catch {

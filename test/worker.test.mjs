@@ -146,6 +146,81 @@ test("authenticated paste HTML stores results while origin and CSRF stay mandato
   }
 });
 
+test("actual Worker gates and composes the live provider for both scan routes", async () => {
+  const secret = "route-only-provider-key";
+  const { env } = configured();
+  env.GOOGLE_SAFE_BROWSING_API_KEY = secret;
+  const originalFetch = globalThis.fetch;
+  const providerCalls = [];
+  globalThis.fetch = async (input, init) => {
+    providerCalls.push({ url: new URL(input), headers: new Headers(init.headers) });
+    return Response.json({ cacheDuration: "1s" });
+  };
+  try {
+    const login = await worker.fetch(loginRequest({
+      username: env.ADMIN_USERNAME, password: env.ADMIN_PASSWORD,
+    }), env);
+    const { csrf_token: csrf } = await login.json();
+    const cookie = login.headers.get("set-cookie");
+    const headers = {
+      cookie, origin: "https://watch.example", "content-type": "application/json", [CSRF_HEADER]: csrf,
+    };
+    const submit = async (path, body) => {
+      const response = await worker.fetch(new Request(`https://watch.example${path}`, {
+        method: "POST", headers, body: JSON.stringify(body),
+      }), env);
+      assert.equal(response.status, 201);
+      const receipt = await response.json();
+      const stored = await worker.fetch(new Request(
+        `https://watch.example/api/results/${receipt.scan_ids[0]}`,
+        { headers: { cookie } },
+      ), env);
+      assert.equal(stored.status, 200);
+      return (await stored.json()).result.provider_observations[0];
+    };
+
+    const disabled = await submit("/api/scans/paste", {
+      mode: "html", base_url: "https://paste.example/", html: '<a href="/disabled">x</a>',
+    });
+    assert.equal(disabled.state, "not_configured");
+    assert.equal(providerCalls.length, 0);
+
+    env.GOOGLE_SAFE_BROWSING_ENABLED = "true";
+    const paste = await submit("/api/scans/paste", {
+      mode: "html", base_url: "https://paste.example/", html: '<a href="/enabled">x</a>',
+    });
+    const observedAt = new Date().toISOString();
+    const live = await submit("/api/scans/live", {
+      document_url: "https://watch.example/reference",
+      observed_at: observedAt,
+      candidates: [{
+        raw_href: "https://live.example/enabled",
+        anchor_text: "live",
+        base_url: "https://watch.example/reference",
+        provenance: {
+          source: "live_page",
+          document_url: "https://watch.example/reference",
+          occurrence_index: 0,
+          extracted_at: observedAt,
+        },
+      }],
+      extraction_rejections: [],
+    });
+    assert.equal(paste.source, "live");
+    assert.equal(live.source, "live");
+    assert.equal(providerCalls.length, 2);
+    for (const call of providerCalls) {
+      assert.equal(call.url.origin + call.url.pathname,
+        "https://safebrowsing.googleapis.com/v5/urls:search");
+      assert.equal(call.url.searchParams.size, 1);
+      assert.equal(call.headers.get("x-goog-api-key"), secret);
+      assert.equal(call.url.href.includes(secret), false);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("wrong, missing, and default credentials deny generically and throttle", async () => {
   const missing = await worker.fetch(loginRequest({ username: "admin", password: "admin" }), {});
   assert.equal(missing.status, 401);

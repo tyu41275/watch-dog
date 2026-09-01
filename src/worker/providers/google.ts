@@ -58,7 +58,7 @@ function durationMilliseconds(value: unknown): number | null {
     : null;
 }
 
-async function boundedJson(response: Response): Promise<unknown> {
+async function boundedJson(response: Response, signal: AbortSignal): Promise<unknown> {
   const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
   if (contentType !== "application/json") throw new TypeError("provider response is not JSON");
   const declared = Number(response.headers.get("content-length") ?? 0);
@@ -70,9 +70,20 @@ async function boundedJson(response: Response): Promise<unknown> {
   if (reader === undefined) throw new TypeError("provider response has no body");
   const chunks: Uint8Array[] = [];
   let length = 0;
+  let abort: (() => void) | undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    abort = () => {
+      void reader.cancel(signal.reason).catch(() => undefined);
+      reject(signal.reason instanceof Error
+        ? signal.reason
+        : new DOMException("provider request timed out", "AbortError"));
+    };
+    if (signal.aborted) abort();
+    else signal.addEventListener("abort", abort, { once: true });
+  });
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await Promise.race([reader.read(), aborted]);
       if (done) break;
       length += value.byteLength;
       if (length > GOOGLE_SAFE_BROWSING.max_response_bytes) {
@@ -82,7 +93,8 @@ async function boundedJson(response: Response): Promise<unknown> {
       chunks.push(value);
     }
   } finally {
-    reader.releaseLock();
+    if (abort !== undefined) signal.removeEventListener("abort", abort);
+    if (!signal.aborted) reader.releaseLock();
   }
   const bytes = new Uint8Array(length);
   let offset = 0;
@@ -115,7 +127,7 @@ function normalizedResponse(
       !exactKeys(value, ["cacheDuration", "threats"]))) {
     return null;
   }
-  const threats = value.threats ?? [];
+  const threats = Object.hasOwn(value, "threats") ? value.threats : [];
   if (!Array.isArray(threats) || threats.length > GOOGLE_SAFE_BROWSING.max_threats) return null;
   const cacheMs = durationMilliseconds(value.cacheDuration);
   if (cacheMs === null) return null;
@@ -128,7 +140,7 @@ function normalizedResponse(
       return null;
     }
     for (const type of threat.threatTypes) {
-      if (typeof type !== "string" || !(type in THREAT_CATEGORIES)) return null;
+      if (typeof type !== "string" || !Object.hasOwn(THREAT_CATEGORIES, type)) return null;
       found.add(type as keyof typeof THREAT_CATEGORIES);
     }
   }
@@ -202,7 +214,9 @@ export class GoogleSafeBrowsingAdapter implements ProviderAdapter {
       }
       if (!response.ok) return providerErrorObservation(request, this.source, "unavailable");
       try {
-        const observation = normalizedResponse(await boundedJson(response), request, requestedMs);
+        const observation = normalizedResponse(
+          await boundedJson(response, controller.signal), request, requestedMs,
+        );
         return observation ?? providerErrorObservation(request, this.source, "malformed_response");
       } catch (error) {
         return providerErrorObservation(request, this.source,
