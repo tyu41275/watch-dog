@@ -105,10 +105,9 @@ async function dnsQuery(
   }
   const bytes = await boundedBytes(response, SAFE_FETCH_LIMITS.max_dns_response_bytes, signal);
   const body = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as DnsJson;
-  if (body.Status !== 0 || body.TC === true || !Array.isArray(body.Answer)) {
-    if (body.Status === 0 && body.Answer === undefined) return [];
-    throw new TypeError("dns response invalid");
-  }
+  if (body.Status !== 0 || (body.TC !== undefined && typeof body.TC !== "boolean")) throw new TypeError("dns response invalid");
+  if (body.TC === true || (body.Answer !== undefined && !Array.isArray(body.Answer))) throw new TypeError("dns response invalid");
+  if (body.Answer === undefined) return [];
   if (body.Answer.length > 64) throw new TypeError("dns answer limit exceeded");
   const recordType = type === "A" ? 1 : 28;
   return body.Answer.flatMap((record) => {

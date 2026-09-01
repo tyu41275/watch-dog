@@ -69,8 +69,9 @@ test("Cloudflare DoH resolver bounds and extracts only A and AAAA answers", asyn
   assert.equal(calls.length, 2);
   assert.ok(calls.every(({ init }) => init.redirect === "error"));
   assert.ok(calls.every(({ init }) => init.headers.accept === "application/dns-json"));
-  const invalid = createCloudflareDohResolver(async () => Response.json({ Status: 2 }));
-  await assert.rejects(invalid("bad.example", new AbortController().signal), /dns response invalid/);
+  for (const body of [{ Status: 2 }, { Status: 0, TC: "true", Answer: [{ type: 1, data: PUBLIC_ADDRESSES[0] }] }, { Status: 0, TC: 1, Answer: [] }]) {
+    await assert.rejects(createCloudflareDohResolver(async () => Response.json(body))("bad.example", new AbortController().signal), /dns response invalid/);
+  }
   const oversized = createCloudflareDohResolver(async () => Response.json({
     Status: 0, Answer: [], padding: "x".repeat(SAFE_FETCH_LIMITS.max_dns_response_bytes),
   }));
