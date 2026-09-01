@@ -10,6 +10,16 @@ export const CANONICAL_REJECTION_REASONS = [
 export type CanonicalRejectionReason =
   (typeof CANONICAL_REJECTION_REASONS)[number];
 
+export const FETCH_REJECTION_REASONS = [
+  "url_too_long", "unsafe_address", "dns_failure", "mixed_address",
+  "redirect_missing_location", "redirect_loop", "redirect_limit", "timeout",
+  "response_too_large", "unsupported_content_type", "unsupported_content_encoding",
+  "fetch_failed", "invalid_response", "input_too_large", "no_candidates",
+] as const;
+
+export type FetchRejectionReason = (typeof FETCH_REJECTION_REASONS)[number];
+export type UnscannableReason = CanonicalRejectionReason | FetchRejectionReason;
+
 export interface CanonicalTarget {
   canonical_url: string;
   scheme: "http" | "https";
