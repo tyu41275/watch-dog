@@ -122,11 +122,20 @@ export function createCloudflareDohResolver(
   fetcher: Fetcher = (input, init) => fetch(input, init),
 ): AddressResolver {
   return async (hostname, signal) => {
-    const [v4, v6] = await Promise.all([
-      dnsQuery(hostname, "A", signal, fetcher),
-      dnsQuery(hostname, "AAAA", signal, fetcher),
-    ]);
-    return [...v4, ...v6];
+    const scope = new AbortController();
+    const abort = () => scope.abort();
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) scope.abort();
+    try {
+      const [v4, v6] = await Promise.all([
+        dnsQuery(hostname, "A", scope.signal, fetcher),
+        dnsQuery(hostname, "AAAA", scope.signal, fetcher),
+      ]);
+      return [...v4, ...v6];
+    } finally {
+      signal.removeEventListener("abort", abort);
+      scope.abort();
+    }
   };
 }
 
@@ -265,7 +274,9 @@ export async function safeFetchHtml(
       return failed("invalid_response", trace);
     }
     const bodyTimeout = remaining(started, now, operationMs, totalMs);
-    if (bodyTimeout <= 0) return failed("timeout", trace);
+    if (bodyTimeout <= 0) {
+      await cancelBody(response); return failed("timeout", trace);
+    }
     let bounded: BoundedHtml;
     try {
       bounded = await operation((signal) => boundedHtml(response, signal), bodyTimeout);
