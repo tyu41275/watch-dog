@@ -5,11 +5,58 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="referrer" content="no-referrer">
     <title>Watch Dog</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script type="module" src="/app.js"></script>
   </head>
   <body>
-    <main>
-      <h1>Watch Dog</h1>
-      <p>The evidence-first URL inspector is starting up.</p>
+    <header class="site-header">
+      <a class="brand" href="/">Watch Dog</a>
+      <span class="tagline">Evidence before confidence.</span>
+    </header>
+    <main class="shell">
+      <section class="hero">
+        <p class="eyebrow">Two-mode WebMCP demo</p>
+        <h1>Inspect links without pretending uncertainty is safety.</h1>
+        <p>Paste a URL or inert HTML, or inspect Watch Dog’s own reference page. Both modes use the same bounded analysis and result surface.</p>
+      </section>
+
+      <section id="login-panel" class="panel narrow" aria-labelledby="login-title">
+        <h2 id="login-title">Judge sign in</h2>
+        <p>Credentials are checked only by the server and represented by a short-lived protected cookie.</p>
+        <form id="login-form">
+          <label>Username <input name="username" autocomplete="username" required maxlength="256"></label>
+          <label>Password <input name="password" type="password" autocomplete="current-password" required maxlength="512"></label>
+          <button type="submit">Sign in</button>
+        </form>
+      </section>
+
+      <section id="scan-panel" class="panel" aria-labelledby="scan-title" hidden>
+        <div class="panel-heading">
+          <div><p class="eyebrow">Paste Scan</p><h2 id="scan-title">Choose one bounded input</h2></div>
+          <button id="logout" class="secondary" type="button">Sign out</button>
+        </div>
+        <div class="mode-grid">
+          <form id="url-form" class="mode-card">
+            <h3>Fetch one public page</h3>
+            <p>Every redirect and destination is validated. Refusals stay visibly unscannable.</p>
+            <label>HTTP(S) URL <input name="url" type="url" required maxlength="2048" placeholder="https://example.com/"></label>
+            <button type="submit">Scan URL</button>
+          </form>
+          <form id="html-form" class="mode-card">
+            <h3>Parse pasted HTML locally</h3>
+            <p>Scripts and subresources never execute or load; only bounded anchor attributes are parsed.</p>
+            <label>Effective base URL <input name="base_url" type="url" required maxlength="2048" placeholder="https://example.com/"></label>
+            <label>HTML <textarea name="html" required maxlength="200000" rows="6" placeholder="&lt;a href='./help'&gt;Help&lt;/a&gt;"></textarea></label>
+            <button type="submit">Scan inert HTML</button>
+          </form>
+        </div>
+        <p class="reference-callout"><a href="/reference">Open the Watch Dog-owned Live Page Scan reference</a></p>
+      </section>
+
+      <p id="app-status" class="status" role="status" aria-live="polite">Checking session…</p>
+      <section id="results" aria-live="polite" aria-labelledby="results-title" hidden>
+        <p class="eyebrow">Shared result surface</p><h2 id="results-title">Analysis results</h2>
+      </section>
     </main>
   </body>
 </html>

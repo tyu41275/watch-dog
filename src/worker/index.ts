@@ -309,6 +309,11 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
   }
 
   if (env.ASSETS) {
+    if (url.pathname === "/" && request.method === "GET") {
+      const assetUrl = new URL(request.url);
+      assetUrl.pathname = "/index.html";
+      return env.ASSETS.fetch(new Request(assetUrl, request));
+    }
     if (url.pathname === "/reference" && request.method === "GET") {
       const assetUrl = new URL(request.url);
       assetUrl.pathname = "/reference.html";

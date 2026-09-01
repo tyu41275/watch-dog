@@ -6,10 +6,13 @@
   "scripts": {
     "build": "tsc",
     "dev": "npx --yes wrangler@4.127.1 dev",
+    "test:browser": "playwright test",
+    "record:demo": "playwright test --config playwright.recording.config.mjs",
     "test": "npm run build && node --test test/*.test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@playwright/test": "1.62.1",
     "typescript": "7.0.2"
   },
   "engines": {

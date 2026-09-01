@@ -14,6 +14,8 @@ venv/
 dist/
 build/
 coverage/
+test-results/
+.wrangler/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

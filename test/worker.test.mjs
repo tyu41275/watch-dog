@@ -56,10 +56,12 @@ test("the real entrypoint fails closed for unimplemented API routes", async () =
 });
 
 test("the real entrypoint delegates public requests to the asset binding", async () => {
+  let assetUrl;
   const response = await worker.fetch(new Request("https://example.test/"), {
-    ASSETS: { fetch: async () => new Response("asset") },
+    ASSETS: { fetch: async (request) => { assetUrl = request.url; return new Response("asset"); } },
   });
   assert.equal(await response.text(), "asset");
+  assert.equal(assetUrl, "https://example.test/index.html");
 });
 
 test("actual Worker login creates a signed cookie and enforces session plus CSRF", async () => {

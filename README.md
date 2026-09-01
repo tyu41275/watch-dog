@@ -45,7 +45,21 @@ Provider-specific terms, attribution, privacy, and failure semantics are in the
 
 ## Project status
 
-Watch Dog is currently pre-release. This repository contains the approved product architecture, security requirements, and acceptance criteria; application implementation is tracked in [issue #1](https://github.com/tyu41275/watch-dog/issues/1).
+Watch Dog is an implementation candidate pending exact-revision deployment and submission acceptance. The repository does not claim that local fixtures or shimmed WebMCP integration are live-provider or supported-browser proof.
+
+## Verify locally
+
+Use Node.js 22 or newer:
+
+```sh
+npm ci
+npm run typecheck
+npm test
+npm run test:browser
+npx wrangler@4.127.1 deploy --dry-run
+```
+
+The browser command runs the real local Worker and Durable Object seams over self-signed HTTPS. See the [browser verification guide](docs/browser-verification.md) for Chrome-channel, artifact, deployment-smoke, and recording boundaries.
 
 The project is licensed under the [Apache License 2.0](LICENSE).
 
@@ -55,6 +69,7 @@ The project is licensed under the [Apache License 2.0](LICENSE).
 - [Architecture decision](docs/adr/0001-mvp-boundary.md)
 - [Threat model](docs/threat-model.md)
 - [Google Safe Browsing integration](docs/google-safe-browsing.md)
+- [Browser verification](docs/browser-verification.md)
 - [Acceptance criteria](docs/acceptance-criteria.md)
 - [Glossary](docs/glossary.md)
 - [Documentation index](docs/README.md)

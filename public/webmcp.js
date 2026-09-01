@@ -80,6 +80,27 @@ function validSession(value) {
     new Date(value.expires_at).toISOString() === value.expires_at;
 }
 
+async function authenticatedPost(fetcher, path, payload, signal) {
+  const session = await safeFetch(fetcher, "/api/session", {
+    method: "GET", credentials: "same-origin", headers: { accept: "application/json" }, signal,
+  });
+  const sessionBody = await jsonResponse(session);
+  if (!session.ok) throw typedError(session.status, sessionBody);
+  if (!validSession(sessionBody)) throw new Error("malformed_response");
+  signal?.throwIfAborted();
+  const response = await safeFetch(fetcher, path, {
+    method: "POST", credentials: "same-origin", signal,
+    headers: {
+      accept: "application/json", "content-type": "application/json",
+      "x-watchdog-csrf": sessionBody.csrf_token,
+    },
+    body: JSON.stringify(payload),
+  });
+  const body = await jsonResponse(response);
+  if (!response.ok) throw typedError(response.status, body);
+  return body;
+}
+
 const REJECTION_REASONS = new Set([
   "empty_input", "missing_base_url", "invalid_url", "unsupported_scheme",
   "credentials_not_allowed", "disallowed_port", "url_too_long",
@@ -154,35 +175,52 @@ export async function inspectCurrentPage({ pageDocument, fetcher, signal }) {
   signal?.throwIfAborted();
   const observedAt = new Date().toISOString();
   const extraction = extractRenderedPage(pageDocument, observedAt);
-  const session = await safeFetch(fetcher, "/api/session", {
-    method: "GET",
-    credentials: "same-origin",
-    headers: { accept: "application/json" },
-    signal,
-  });
-  const sessionBody = await jsonResponse(session);
-  if (!session.ok) throw typedError(session.status, sessionBody);
-  if (!validSession(sessionBody)) throw new Error("malformed_response");
+  const body = await authenticatedPost(fetcher, "/api/scans/live", {
+    document_url: pageDocument.URL,
+    observed_at: observedAt,
+    ...extraction,
+  }, signal);
+  if (!validReceipt(body)) throw new Error("malformed_response");
+  return JSON.stringify(body);
+}
+
+function validPasteReceipt(value) {
+  return isRecord(value) && ["paste_url", "paste_html"].includes(value.mode) &&
+    Array.isArray(value.scan_ids) && value.scan_ids.length <= 16 &&
+    value.scan_ids.every((id) => typeof id === "string" && /^[a-f0-9]{32}$/u.test(id)) &&
+    Number.isSafeInteger(value.accepted_targets) && value.accepted_targets >= 0 &&
+    Number.isSafeInteger(value.rejected_candidates) && value.rejected_candidates >= 0 &&
+    typeof value.truncated === "boolean";
+}
+
+export async function scanUrl({ fetcher, targetUrl, pastedHtml, baseUrl, signal }) {
   signal?.throwIfAborted();
-  const response = await safeFetch(fetcher, "/api/scans/live", {
-    method: "POST",
-    credentials: "same-origin",
-    headers: {
-      accept: "application/json",
-      "content-type": "application/json",
-      "x-watchdog-csrf": sessionBody.csrf_token,
-    },
-    body: JSON.stringify({
-      document_url: pageDocument.URL,
-      observed_at: observedAt,
-      ...extraction,
-    }),
-    signal,
+  if (typeof targetUrl !== "string" || targetUrl.length === 0 || targetUrl.length > 2048 ||
+    (pastedHtml !== undefined && (typeof pastedHtml !== "string" || pastedHtml.length > 200_000)) ||
+    (baseUrl !== undefined && (typeof baseUrl !== "string" || baseUrl.length > 2048))) {
+    throw new Error("invalid_arguments");
+  }
+  const payload = pastedHtml === undefined
+    ? { mode: "url", url: targetUrl }
+    : { mode: "html", html: pastedHtml, base_url: baseUrl ?? targetUrl };
+  const body = await authenticatedPost(fetcher, "/api/scans/paste", payload, signal);
+  if (!validPasteReceipt(body)) throw new Error("malformed_response");
+  return JSON.stringify(body);
+}
+
+export async function getScanResult({ fetcher, scanId, signal }) {
+  signal?.throwIfAborted();
+  if (typeof scanId !== "string" || !/^[a-f0-9]{32}$/u.test(scanId)) {
+    throw new Error("invalid_arguments");
+  }
+  const response = await safeFetch(fetcher, `/api/results/${scanId}`, {
+    method: "GET", credentials: "same-origin", headers: { accept: "application/json" }, signal,
   });
   const body = await jsonResponse(response);
   if (!response.ok) throw typedError(response.status, body);
-  if (!validReceipt(body)) throw new Error("malformed_response");
-  return JSON.stringify(body);
+  if (!isRecord(body) || body.status !== "ok" || !isRecord(body.result) ||
+    body.result.scan_id !== scanId) throw new Error("malformed_response");
+  return JSON.stringify(body.result);
 }
 
 export function createInspectCurrentPageTool(pageDocument, fetcher) {
@@ -204,9 +242,50 @@ export function createInspectCurrentPageTool(pageDocument, fetcher) {
         typeof argumentsObject !== "object" || argumentsObject === null ||
         Array.isArray(argumentsObject) || Object.keys(argumentsObject).length !== 0
       ) throw new Error("invalid_arguments");
-      return inspectCurrentPage({ pageDocument, fetcher, signal: context.signal });
+      const output = await inspectCurrentPage({ pageDocument, fetcher, signal: context.signal });
+      const Event = pageDocument.defaultView?.CustomEvent;
+      if (typeof pageDocument.dispatchEvent === "function" && typeof Event === "function") {
+        pageDocument.dispatchEvent(new Event("watchdog:scan-receipt", { detail: JSON.parse(output) }));
+      }
+      return output;
     },
   };
+}
+
+export function createSupportingTools(fetcher) {
+  return [
+    {
+      name: "scan_url", title: "Scan a URL or pasted HTML",
+      description: "Analyze one HTTP(S) target through Watch Dog. Optional pasted HTML is parsed locally without loading subresources.",
+      inputSchema: {
+        type: "object", required: ["targetUrl"], additionalProperties: false,
+        properties: {
+          targetUrl: { type: "string", maxLength: 2048, description: "HTTP(S) target or effective fallback base URL." },
+          pastedHtml: { type: "string", maxLength: 200000, description: "Optional inert HTML; selecting it disables network page fetch." },
+          baseUrl: { type: "string", maxLength: 2048, description: "Optional effective base URL for pasted HTML." },
+        },
+      },
+      annotations: { readOnlyHint: true, untrustedContentHint: true },
+      execute(args = {}, context = {}) {
+        if (!isRecord(args) || Object.keys(args).some((key) =>
+          !["targetUrl", "pastedHtml", "baseUrl"].includes(key))) throw new Error("invalid_arguments");
+        return scanUrl({ fetcher, ...args, signal: context.signal });
+      },
+    },
+    {
+      name: "get_scan_result", title: "Get a Watch Dog scan result",
+      description: "Retrieve one bounded ephemeral result owned by this authenticated session.",
+      inputSchema: {
+        type: "object", required: ["scanId"], additionalProperties: false,
+        properties: { scanId: { type: "string", pattern: "^[a-f0-9]{32}$", description: "Opaque session-owned scan identifier." } },
+      },
+      annotations: { readOnlyHint: true, untrustedContentHint: true },
+      execute(args = {}, context = {}) {
+        if (!isRecord(args) || !exactKeys(args, ["scanId"])) throw new Error("invalid_arguments");
+        return getScanResult({ fetcher, scanId: args.scanId, signal: context.signal });
+      },
+    },
+  ];
 }
 
 function renderStatus(pageDocument, message) {
@@ -220,9 +299,10 @@ export async function registerBrowserTool() {
     return null;
   }
   const controller = new AbortController();
-  const tool = createInspectCurrentPageTool(document, globalThis.fetch.bind(globalThis));
-  await document.modelContext.registerTool(tool, { signal: controller.signal });
-  renderStatus(document, "WebMCP tool registered: inspect_current_page.");
+  const fetcher = globalThis.fetch.bind(globalThis);
+  const tools = [createInspectCurrentPageTool(document, fetcher), ...createSupportingTools(fetcher)];
+  for (const tool of tools) await document.modelContext.registerTool(tool, { signal: controller.signal });
+  renderStatus(document, "WebMCP tools registered: inspect_current_page, scan_url, get_scan_result.");
   return controller;
 }
 
