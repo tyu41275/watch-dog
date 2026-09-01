@@ -1,3 +1,5 @@
+import { defaultTreeAdapter, parseFragment, type DefaultTreeAdapterMap } from "parse5";
+
 import type { ExtractedLinkCandidate } from "./contracts.js";
 
 export const HTML_EXTRACTION_LIMITS = {
@@ -13,209 +15,88 @@ export interface HtmlExtractionContext {
   extracted_at: string;
 }
 
-interface TagToken {
-  name: string;
-  closing: boolean;
-  selfClosing: boolean;
-  attributes: Map<string, string>;
-}
+type Node = DefaultTreeAdapterMap["node"];
+type Element = DefaultTreeAdapterMap["element"];
 
-interface OpenAnchor {
-  href: string;
-  text: string;
-}
-
-// Content in these elements is deliberately never interpreted as links.
-const INERT_CONTENT = new Set([
+// These elements are not candidate-bearing content under the frozen paste
+// contract. Skipping the element also skips template.content and foreign trees.
+const EXCLUDED_CONTENT = new Set([
   "script", "style", "template", "noscript", "iframe", "frame",
   "object", "svg", "math", "textarea", "xmp", "plaintext", "title",
   "noembed", "noframes", "select",
 ]);
 
-function opensInertContent(token: TagToken): boolean {
-  if (token.closing || !INERT_CONTENT.has(token.name) || token.name === "frame") return false;
-  // Self-closing syntax is honored in foreign SVG/MathML content, but ignored
-  // for non-void HTML raw-text and container elements.
-  return !(token.selfClosing && (token.name === "svg" || token.name === "math"));
+function isElement(node: Node): node is Element {
+  return defaultTreeAdapter.isElementNode(node);
 }
 
-const NAMED_ENTITIES: Readonly<Record<string, string>> = {
-  amp: "&",
-  apos: "'",
-  gt: ">",
-  lt: "<",
-  nbsp: "\u00a0",
-  quot: '"',
-};
-
-function decodeEntities(value: string): string {
-  return value.replace(
-    /&(#(?:x[\da-f]+|\d+)|[a-z]+);/gi,
-    (whole: string, body: string) => {
-      if (body[0] !== "#") return NAMED_ENTITIES[body.toLowerCase()] ?? whole;
-      const hex = body[1]?.toLowerCase() === "x";
-      const numeric = Number.parseInt(body.slice(hex ? 2 : 1), hex ? 16 : 10);
-      if (!Number.isInteger(numeric) || numeric === 0 || numeric > 0x10ffff ||
-          (numeric >= 0xd800 && numeric <= 0xdfff)) return "\ufffd";
-      return String.fromCodePoint(numeric);
-    },
-  );
+function pushChildren(node: Node, stack: Node[]): void {
+  if (!("childNodes" in node)) return;
+  for (let index = node.childNodes.length - 1; index >= 0; index -= 1) {
+    const child = node.childNodes[index];
+    if (child !== undefined) stack.push(child);
+  }
 }
 
-function normalizeText(value: string): string {
-  return decodeEntities(value).replace(/\s+/g, " ").trim();
-}
-
-function readTagEnd(html: string, start: number): number {
-  let quote = "";
-  for (let index = start + 1; index < html.length; index += 1) {
-    const character = html[index] ?? "";
-    if (quote !== "") {
-      if (character === quote) quote = "";
-    } else if (character === '"' || character === "'") {
-      quote = character;
-    } else if (character === ">") {
-      return index;
+function normalizedAnchorText(element: Element): string {
+  const parts: string[] = [];
+  const stack: Node[] = [];
+  let length = 0;
+  pushChildren(element, stack);
+  while (stack.length > 0 && length < HTML_EXTRACTION_LIMITS.max_anchor_text_chars) {
+    const node = stack.pop();
+    if (node === undefined) break;
+    if (defaultTreeAdapter.isTextNode(node)) {
+      const value = node.value.slice(
+        0,
+        HTML_EXTRACTION_LIMITS.max_anchor_text_chars - length,
+      );
+      parts.push(value);
+      length += value.length;
+    } else if (!(isElement(node) && EXCLUDED_CONTENT.has(node.tagName))) {
+      pushChildren(node, stack);
     }
   }
-  return -1;
-}
-
-function parseTag(source: string): TagToken | null {
-  let index = 1;
-  while (/\s/.test(source[index] ?? "")) index += 1;
-  const closing = source[index] === "/";
-  if (closing) index += 1;
-  while (/\s/.test(source[index] ?? "")) index += 1;
-
-  const nameStart = index;
-  while (/[A-Za-z0-9:-]/.test(source[index] ?? "")) index += 1;
-  if (index === nameStart) return null;
-  const name = source.slice(nameStart, index).toLowerCase();
-  const attributes = new Map<string, string>();
-
-  while (index < source.length - 1 && !closing) {
-    while (/\s/.test(source[index] ?? "")) index += 1;
-    if (source[index] === "/" || source[index] === ">") break;
-    const attributeStart = index;
-    while (/[^\s=/>]/.test(source[index] ?? "")) index += 1;
-    if (index === attributeStart) {
-      index += 1;
-      continue;
-    }
-    const attributeName = source.slice(attributeStart, index).toLowerCase();
-    while (/\s/.test(source[index] ?? "")) index += 1;
-    let value = "";
-    if (source[index] === "=") {
-      index += 1;
-      while (/\s/.test(source[index] ?? "")) index += 1;
-      const quote = source[index];
-      if (quote === '"' || quote === "'") {
-        index += 1;
-        const valueStart = index;
-        while (index < source.length && source[index] !== quote) index += 1;
-        value = source.slice(valueStart, index);
-        if (source[index] === quote) index += 1;
-      } else {
-        const valueStart = index;
-        while (/[^\s>]/.test(source[index] ?? "")) index += 1;
-        value = source.slice(valueStart, index);
-      }
-    }
-    // Match browser behavior for duplicate attributes: the first wins.
-    if (!attributes.has(attributeName)) attributes.set(attributeName, decodeEntities(value));
-  }
-
-  return {
-    name,
-    closing,
-    selfClosing: /\/\s*>$/.test(source),
-    attributes,
-  };
-}
-
-function appendText(anchor: OpenAnchor | null, value: string): void {
-  if (anchor === null || anchor.text.length >= HTML_EXTRACTION_LIMITS.max_anchor_text_chars) return;
-  anchor.text += value.slice(0, HTML_EXTRACTION_LIMITS.max_anchor_text_chars - anchor.text.length);
+  return parts.join("").replace(/\s+/g, " ").trim();
 }
 
 /**
- * Extract anchors from pasted text without constructing a DOM. This function
- * has no execution, fetching, or subresource-loading capability and ignores
- * document-controlled base elements.
+ * Parse bounded pasted text as an inert HTML fragment. parse5 implements the
+ * HTML tokenizer/tree builder without a live DOM, script execution, fetching,
+ * rendering, or subresource loading. Only anchor hrefs and bounded text are
+ * read; document-controlled base elements are ignored.
  */
 export function extractHtmlLinkCandidates(
   input: string,
   context: HtmlExtractionContext,
 ): ExtractedLinkCandidate[] {
-  const html = input.slice(0, HTML_EXTRACTION_LIMITS.max_input_chars);
+  const fragment = parseFragment(input.slice(0, HTML_EXTRACTION_LIMITS.max_input_chars));
   const candidates: ExtractedLinkCandidate[] = [];
-  const inertStack: string[] = [];
-  let anchor: OpenAnchor | null = null;
-  let cursor = 0;
+  const stack: Node[] = [fragment];
 
-  const finishAnchor = (): void => {
-    if (anchor === null || candidates.length >= HTML_EXTRACTION_LIMITS.max_candidates) return;
-    if (anchor.href.length <= HTML_EXTRACTION_LIMITS.max_href_chars) {
-      candidates.push({
-        raw_href: anchor.href,
-        anchor_text: normalizeText(anchor.text),
-        base_url: context.base_url,
-        provenance: {
-          source: "paste_html",
-          document_url: context.document_url,
-          occurrence_index: candidates.length,
-          extracted_at: context.extracted_at,
-        },
-      });
-    }
-    anchor = null;
-  };
-
-  while (cursor < html.length && candidates.length < HTML_EXTRACTION_LIMITS.max_candidates) {
-    const tagStart = html.indexOf("<", cursor);
-    if (tagStart < 0) {
-      if (inertStack.length === 0) appendText(anchor, html.slice(cursor));
-      break;
-    }
-    if (inertStack.length === 0) appendText(anchor, html.slice(cursor, tagStart));
-
-    if (html.startsWith("<!--", tagStart)) {
-      const end = html.indexOf("-->", tagStart + 4);
-      cursor = end < 0 ? html.length : end + 3;
-      continue;
-    }
-    const tagEnd = readTagEnd(html, tagStart);
-    if (tagEnd < 0) break;
-    const token = parseTag(html.slice(tagStart, tagEnd + 1));
-    cursor = tagEnd + 1;
-    if (token === null) continue;
-
-    if (inertStack.length > 0) {
-      if (token.closing && token.name === inertStack[inertStack.length - 1]) inertStack.pop();
-      else if (opensInertContent(token)) {
-        inertStack.push(token.name);
+  while (stack.length > 0 && candidates.length < HTML_EXTRACTION_LIMITS.max_candidates) {
+    const node = stack.pop();
+    if (node === undefined) break;
+    if (isElement(node)) {
+      if (EXCLUDED_CONTENT.has(node.tagName)) continue;
+      if (node.tagName === "a") {
+        const href = node.attrs.find((attribute) => attribute.name === "href")?.value;
+        if (href !== undefined && href.length <= HTML_EXTRACTION_LIMITS.max_href_chars) {
+          candidates.push({
+            raw_href: href,
+            anchor_text: normalizedAnchorText(node),
+            base_url: context.base_url,
+            provenance: {
+              source: "paste_html",
+              document_url: context.document_url,
+              occurrence_index: candidates.length,
+              extracted_at: context.extracted_at,
+            },
+          });
+        }
       }
-      continue;
     }
-
-    if (!token.closing && INERT_CONTENT.has(token.name)) {
-      if (opensInertContent(token)) inertStack.push(token.name);
-      continue;
-    }
-    if (token.name !== "a") continue;
-    if (token.closing) {
-      finishAnchor();
-      continue;
-    }
-
-    // HTML's nested-anchor recovery closes the previous anchor first.
-    finishAnchor();
-    const href = token.attributes.get("href");
-    if (href !== undefined) anchor = { href, text: "" };
-    if (token.selfClosing) finishAnchor();
+    pushChildren(node, stack);
   }
-
-  finishAnchor();
   return candidates;
 }

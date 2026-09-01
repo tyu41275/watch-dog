@@ -194,8 +194,16 @@ test("scripts, comments, inert containers and subresource attributes yield no ca
     <noscript><a href="https://noscript.invalid">x</a></noscript>
     <iframe src="https://frame.invalid"><a href="https://fallback.invalid">x</a></iframe>
     <svg><a href="https://svg.invalid">x</a></svg>
+    <math><a href="https://math.invalid">x</a></math>
     <img src="https://image.invalid" srcset="https://set.invalid 2x" onerror="globalThis.__watchDogExecuted=true">
-    <object data="https://object.invalid"></object>
+    <source src="https://media.invalid" srcset="https://media-set.invalid 2x">
+    <object data="https://object.invalid"><a href="https://object-fallback.invalid">x</a></object>
+    <textarea><a href="https://textarea.invalid">x</a></textarea>
+    <xmp><a href="https://xmp.invalid">x</a></xmp>
+    <title><a href="https://title.invalid">x</a></title>
+    <noembed><a href="https://noembed.invalid">x</a></noembed>
+    <noframes><a href="https://noframes.invalid">x</a></noframes>
+    <select><option><a href="https://select.invalid">x</a></option></select>
     <link href="https://stylesheet.invalid" rel="stylesheet">
     <div style="background:url(https://inline.invalid)"></div>`;
   assert.deepEqual(extractHtmlLinkCandidates(hostile, extractionContext), []);
@@ -208,6 +216,56 @@ test("self-closing syntax cannot escape HTML raw-text containers", () => {
     <script src="https://script.invalid"/><a href="https://inside-script.invalid">hidden</a>
     <plaintext><a href="https://plaintext.invalid">hidden</a>`;
   assert.deepEqual(extractHtmlLinkCandidates(hostile, extractionContext), []);
+});
+
+test("HTML tokenizer syntax errors do not synthesize anchors or close inert content", () => {
+  const whitespaceAfterOpen = '< a href="https://space.invalid/">not an anchor</ a>';
+  const malformedRawTextClose = `
+    <script>const inert = true;</ script>
+    <a href="https://still-script.invalid/">not an anchor</a>`;
+
+  assert.deepEqual(extractHtmlLinkCandidates(whitespaceAfterOpen, extractionContext), []);
+  assert.deepEqual(extractHtmlLinkCandidates(malformedRawTextClose, extractionContext), []);
+});
+
+test("plaintext state cannot be closed by apparent markup", () => {
+  const hostile = `
+    <plaintext>everything after this is text
+    </plaintext><a href="https://plaintext-close.invalid/">not an anchor</a>`;
+  assert.deepEqual(extractHtmlLinkCandidates(hostile, extractionContext), []);
+});
+
+test("self-closing syntax on an HTML anchor preserves its visible text", () => {
+  const extracted = extractHtmlLinkCandidates(
+    '<a href="/self-closing"/>visible <b>anchor</b> text</a>',
+    extractionContext,
+  );
+  assert.deepEqual(extracted.map(({ raw_href, anchor_text }) => ({ raw_href, anchor_text })), [
+    { raw_href: "/self-closing", anchor_text: "visible anchor text" },
+  ]);
+});
+
+test("HTML entity decoding exposes encoded schemes to typed rejection", () => {
+  const extracted = extractHtmlLinkCandidates(`
+    <a href="javascript&colon;alert(1)">named</a>
+    <a href="javascript&#58alert(2)">decimal without semicolon</a>
+    <a href="javascript&#x3A/alert(3)">hex without semicolon</a>`, extractionContext);
+
+  assert.deepEqual(extracted.map((candidate) => candidate.raw_href), [
+    "javascript:alert(1)",
+    "javascript:alert(2)",
+    "javascript:/alert(3)",
+  ]);
+  const collection = collectLinkCandidates(extracted);
+  assert.deepEqual(collection.targets, []);
+  assert.deepEqual(collection.rejected.map(({ candidate, reason }) => ({
+    raw_href: candidate.raw_href,
+    reason,
+  })), [
+    { raw_href: "javascript:alert(1)", reason: "unsupported_scheme" },
+    { raw_href: "javascript:alert(2)", reason: "unsupported_scheme" },
+    { raw_href: "javascript:/alert(3)", reason: "unsupported_scheme" },
+  ]);
 });
 
 test("malformed and nested markup is handled conservatively", () => {
@@ -253,4 +311,9 @@ test("HTML extraction enforces input, href, text and candidate limits", () => {
 
   const oversizedHref = `<a href="/${"z".repeat(HTML_EXTRACTION_LIMITS.max_href_chars)}">skip</a>`;
   assert.deepEqual(extractHtmlLinkCandidates(oversizedHref, extractionContext), []);
+
+  const overInputLimit = "x".repeat(HTML_EXTRACTION_LIMITS.max_input_chars) +
+    '<a href="https://past-limit.invalid/">past limit</a>';
+  assert.ok(overInputLimit.length > HTML_EXTRACTION_LIMITS.max_input_chars);
+  assert.deepEqual(extractHtmlLinkCandidates(overInputLimit, extractionContext), []);
 });
