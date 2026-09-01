@@ -287,8 +287,12 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     return json({ error: "not_configured" }, 503);
   }
 
-  if (url.pathname === "/reference.html" && request.method === "GET") {
+  if (
+    request.method === "GET" &&
+    (url.pathname === "/reference.html" || (url.pathname === "/reference" && url.search !== ""))
+  ) {
     url.pathname = "/reference";
+    url.search = "";
     return Response.redirect(url, 308);
   }
 

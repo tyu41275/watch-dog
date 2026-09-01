@@ -101,9 +101,21 @@ test("live request parsing is exact, bounded, route-owned, and timestamp-bounded
     extraction_rejections: [],
   };
   assert.deepEqual(parseLiveRequest(value, "https://watch.example", now), value);
+  const fragmentDocument = "https://watch.example/reference#visible-section";
+  const fragmentValue = {
+    ...value,
+    document_url: fragmentDocument,
+    candidates: [candidate("./one", "one", 0, observedAt, {
+      base_url: fragmentDocument,
+      provenance: { ...value.candidates[0].provenance, document_url: fragmentDocument },
+    })],
+  };
+  assert.deepEqual(parseLiveRequest(fragmentValue, "https://watch.example", now), fragmentValue);
   for (const invalid of [
     { ...value, extra: true },
     { ...value, document_url: "https://watch.example/elsewhere" },
+    { ...value, document_url: "https://watch.example/reference.html" },
+    { ...value, document_url: "https://watch.example/reference?probe=1" },
     { ...value, observed_at: "2026-09-01T06:20:00.000Z" },
     { ...value, candidates: [candidate("./one", "one", 1, observedAt)] },
     { ...value, candidates: [candidate("./one", "one", 0, observedAt, {
@@ -251,7 +263,10 @@ test("the fixed reference route rewrites only the asset request and canonicalize
   assert.deepEqual(seen, ["https://watch.example/reference.html"]);
   const direct = await worker.fetch(new Request("https://watch.example/reference.html?probe=1"), env);
   assert.equal(direct.status, 308);
-  assert.equal(direct.headers.get("location"), "https://watch.example/reference?probe=1");
+  assert.equal(direct.headers.get("location"), "https://watch.example/reference");
+  const queried = await worker.fetch(new Request("https://watch.example/reference?probe=1"), env);
+  assert.equal(queried.status, 308);
+  assert.equal(queried.headers.get("location"), "https://watch.example/reference");
   assert.deepEqual(seen, ["https://watch.example/reference.html"]);
 });
 

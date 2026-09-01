@@ -56,6 +56,17 @@ function validTimestamp(value: string): boolean {
   return Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
 }
 
+function fixedReferenceUrl(value: string, expectedOrigin: string): boolean {
+  if (value.length > LIVE_LIMITS.max_url_chars) return false;
+  try {
+    const url = new URL(value);
+    return url.origin === expectedOrigin && url.pathname === "/reference" &&
+      url.search === "" && url.username === "" && url.password === "";
+  } catch {
+    return false;
+  }
+}
+
 export function parseLiveRequest(
   value: unknown,
   expectedOrigin: string,
@@ -69,8 +80,7 @@ export function parseLiveRequest(
   if (typeof data.document_url !== "string" || typeof data.observed_at !== "string") return null;
   if (!Array.isArray(data.candidates) || !Array.isArray(data.extraction_rejections)) return null;
   if (data.candidates.length + data.extraction_rejections.length > LIVE_LIMITS.max_candidates) return null;
-  const expectedDocument = new URL("/reference", expectedOrigin).href;
-  if (data.document_url !== expectedDocument || !validTimestamp(data.observed_at)) return null;
+  if (!fixedReferenceUrl(data.document_url, expectedOrigin) || !validTimestamp(data.observed_at)) return null;
   const observedMs = Date.parse(data.observed_at);
   if (observedMs < nowMs - 5 * 60_000 || observedMs > nowMs + 60_000) return null;
 
@@ -80,9 +90,9 @@ export function parseLiveRequest(
       const base = new URL(candidate.base_url);
       if (
         candidate.provenance.source !== "live_page" ||
-        candidate.provenance.document_url !== expectedDocument ||
+        candidate.provenance.document_url !== data.document_url ||
         candidate.provenance.extracted_at !== data.observed_at ||
-        base.origin !== expectedOrigin ||
+        !fixedReferenceUrl(candidate.base_url, expectedOrigin) ||
         candidate.base_url.length > LIVE_LIMITS.max_url_chars ||
         candidate.raw_href.length > LIVE_LIMITS.max_href_chars ||
         candidate.anchor_text.length > LIVE_LIMITS.max_anchor_text_chars
