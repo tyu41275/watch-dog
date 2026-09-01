@@ -122,12 +122,23 @@ test("recognized threats map to closed categories with Google-only attribution a
 });
 
 test("HTTP, network, timeout and invalid transport failures normalize without payload leakage", async () => {
-  assert.deepEqual(await observeResponse(new Response("quota detail secret", { status: 429 })),
+  let cancellations = 0;
+  const pending = (init) => new Response(new ReadableStream({
+    cancel() { cancellations += 1; },
+  }), init);
+  assert.deepEqual(await observeResponse(pending({ status: 429 })),
     expectedError("quota"));
-  assert.deepEqual(await observeResponse(new Response("late", { status: 504 })),
+  assert.deepEqual(await observeResponse(pending({ status: 504 })),
     expectedError("timeout"));
-  assert.deepEqual(await observeResponse(new Response("provider detail secret", { status: 503 })),
+  assert.deepEqual(await observeResponse(pending({ status: 503 })),
     expectedError("unavailable"));
+  assert.deepEqual(await observeResponse(pending({ headers: { "content-type": "text/plain" } })),
+    expectedError("malformed_response"));
+  assert.deepEqual(await observeResponse(pending({ headers: {
+    "content-type": "application/json",
+    "content-length": String(GOOGLE_SAFE_BROWSING.max_response_bytes + 1),
+  } })), expectedError("malformed_response"));
+  assert.equal(cancellations, 5);
   const network = new GoogleSafeBrowsingAdapter("key", {
     fetcher: async () => { throw new TypeError("network detail secret"); },
   });
@@ -136,6 +147,10 @@ test("HTTP, network, timeout and invalid transport failures normalize without pa
     fetcher: async () => ({ ok: true }),
   });
   assert.deepEqual(await invalid.observe(request), expectedError("unavailable"));
+  const brokenBody = await observeResponse(new Response(new ReadableStream({
+    start(controller) { controller.error(new TypeError("stream detail secret")); },
+  }), { headers: { "content-type": "application/json" } }));
+  assert.deepEqual(brokenBody, expectedError("unavailable"));
   const hanging = new GoogleSafeBrowsingAdapter("key", {
     timeout_ms: 1,
     fetcher: async (_input, init) => new Promise((_resolve, reject) => {
@@ -155,7 +170,8 @@ test("HTTP, network, timeout and invalid transport failures normalize without pa
   assert.equal(bodyCancelled, true);
 });
 
-test("response parsing fails closed on malformed, oversized and open provider shapes", async () => {
+test("response parsing fails closed on malformed, oversized and open provider shapes",
+  { timeout: 1_000 }, async () => {
   const validThreat = { url: canonicalTarget, threatTypes: ["MALWARE"] };
   const malformed = [
     new Response("not-json", { headers: { "content-type": "application/json" } }),
@@ -187,13 +203,19 @@ test("response parsing fails closed on malformed, oversized and open provider sh
         "content-length": String(GOOGLE_SAFE_BROWSING.max_response_bytes + 1),
       },
     }),
+    new Response(new ReadableStream({
+      pull(controller) {
+        controller.enqueue(new Uint8Array(GOOGLE_SAFE_BROWSING.max_response_bytes + 1));
+      },
+      cancel() { return new Promise(() => undefined); },
+    }), { headers: { "content-type": "application/json" } }),
   ];
   for (const response of malformed) {
     const observation = await observeResponse(response);
     assert.deepEqual(observation, expectedError("malformed_response"));
     assert.equal(JSON.stringify(observation).includes("secret"), false);
   }
-});
+  });
 
 test("request and constructor bounds reject before provider I/O", async () => {
   assert.throws(() => new GoogleSafeBrowsingAdapter("key", { timeout_ms: 0 }),

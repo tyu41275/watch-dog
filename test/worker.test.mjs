@@ -176,13 +176,13 @@ test("actual Worker gates and composes the live provider for both scan routes", 
         { headers: { cookie } },
       ), env);
       assert.equal(stored.status, 200);
-      return (await stored.json()).result.provider_observations[0];
+      return (await stored.json()).result;
     };
 
     const disabled = await submit("/api/scans/paste", {
       mode: "html", base_url: "https://paste.example/", html: '<a href="/disabled">x</a>',
     });
-    assert.equal(disabled.state, "not_configured");
+    assert.equal(disabled.provider_observations[0].state, "not_configured");
     assert.equal(providerCalls.length, 0);
 
     env.GOOGLE_SAFE_BROWSING_ENABLED = "true";
@@ -206,8 +206,9 @@ test("actual Worker gates and composes the live provider for both scan routes", 
       }],
       extraction_rejections: [],
     });
-    assert.equal(paste.source, "live");
-    assert.equal(live.source, "live");
+    assert.equal(paste.provider_observations[0].source, "live");
+    assert.equal(live.provider_observations[0].source, "live");
+    assert.equal(JSON.stringify([paste, live]).includes(secret), false);
     assert.equal(providerCalls.length, 2);
     for (const call of providerCalls) {
       assert.equal(call.url.origin + call.url.pathname,

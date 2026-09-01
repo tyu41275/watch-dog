@@ -37,6 +37,12 @@ interface GoogleSafeBrowsingDependencies {
   timeout_ms?: number;
 }
 
+class ProviderTransportError extends Error {}
+
+function discardBody(response: Response): void {
+  if (response.body !== null) void response.body.cancel().catch(() => undefined);
+}
+
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -60,12 +66,18 @@ function durationMilliseconds(value: unknown): number | null {
 
 async function boundedJson(response: Response, signal: AbortSignal): Promise<unknown> {
   const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
-  if (contentType !== "application/json") throw new TypeError("provider response is not JSON");
+  if (contentType !== "application/json") {
+    discardBody(response);
+    throw new TypeError("provider response is not JSON");
+  }
   const declared = Number(response.headers.get("content-length") ?? 0);
   if (
     !Number.isSafeInteger(declared) || declared < 0 ||
     declared > GOOGLE_SAFE_BROWSING.max_response_bytes
-  ) throw new TypeError("provider response exceeds bounds");
+  ) {
+    discardBody(response);
+    throw new TypeError("provider response exceeds bounds");
+  }
   const reader = response.body?.getReader();
   if (reader === undefined) throw new TypeError("provider response has no body");
   const chunks: Uint8Array[] = [];
@@ -83,11 +95,18 @@ async function boundedJson(response: Response, signal: AbortSignal): Promise<unk
   });
   try {
     while (true) {
-      const { done, value } = await Promise.race([reader.read(), aborted]);
+      let chunk: ReadableStreamReadResult<Uint8Array>;
+      try {
+        chunk = await Promise.race([reader.read(), aborted]);
+      } catch (error) {
+        if (signal.aborted) throw error;
+        throw new ProviderTransportError();
+      }
+      const { done, value } = chunk;
       if (done) break;
       length += value.byteLength;
       if (length > GOOGLE_SAFE_BROWSING.max_response_bytes) {
-        await reader.cancel();
+        void reader.cancel().catch(() => undefined);
         throw new TypeError("provider response exceeds bounds");
       }
       chunks.push(value);
@@ -208,11 +227,18 @@ export class GoogleSafeBrowsingAdapter implements ProviderAdapter {
       if (!(response instanceof Response)) {
         return providerErrorObservation(request, this.source, "unavailable");
       }
-      if (response.status === 429) return providerErrorObservation(request, this.source, "quota");
+      if (response.status === 429) {
+        discardBody(response);
+        return providerErrorObservation(request, this.source, "quota");
+      }
       if (response.status === 408 || response.status === 504) {
+        discardBody(response);
         return providerErrorObservation(request, this.source, "timeout");
       }
-      if (!response.ok) return providerErrorObservation(request, this.source, "unavailable");
+      if (!response.ok) {
+        discardBody(response);
+        return providerErrorObservation(request, this.source, "unavailable");
+      }
       try {
         const observation = normalizedResponse(
           await boundedJson(response, controller.signal), request, requestedMs,
@@ -222,7 +248,7 @@ export class GoogleSafeBrowsingAdapter implements ProviderAdapter {
         return providerErrorObservation(request, this.source,
           controller.signal.aborted || (error instanceof DOMException && error.name === "AbortError")
             ? "timeout"
-            : "malformed_response");
+            : error instanceof ProviderTransportError ? "unavailable" : "malformed_response");
       }
     } finally {
       clearTimeout(timeout);
