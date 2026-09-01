@@ -11,7 +11,7 @@ import {
   type ScanResult,
 } from "./contracts.js";
 import type { CanonicalCandidateTarget } from "./candidates.js";
-import type { CanonicalRejectionReason } from "./canonicalize.js";
+import type { UnscannableReason } from "./canonicalize.js";
 
 export const ANALYSIS_LIMITS = { max_provider_observations: 16 } as const;
 
@@ -48,7 +48,7 @@ export type AnalysisInput = AnalysisBase & (
     }
   | {
       target: null;
-      unscannable_reason: CanonicalRejectionReason;
+      unscannable_reason: UnscannableReason;
     }
 );
 

@@ -10,8 +10,15 @@ import {
 } from "./auth.js";
 import {
   type CoordinatorNamespace,
+  type CoordinatorStub,
   SessionCoordinator,
 } from "./coordinator.js";
+import type { ScanResult } from "../shared/contracts.js";
+import {
+  PASTE_LIMITS,
+  executePasteScan,
+  parsePasteRequest,
+} from "./fetch/paste.js";
 
 interface AssetBinding {
   fetch(request: Request): Promise<Response>;
@@ -182,6 +189,50 @@ async function getResult(request: Request, env: Env, scanId: string): Promise<Re
   }));
 }
 
+async function storeResult(
+  binding: CoordinatorStub,
+  sessionId: string,
+  result: ScanResult,
+): Promise<string> {
+  const response = await binding.fetch(new Request("https://coordinator/results", {
+    method: "POST",
+    body: JSON.stringify({ session_id: sessionId, result }),
+  }));
+  if (!response.ok) throw new TypeError("result coordination failed");
+  const body = await response.json() as { scan_id?: unknown };
+  if (typeof body.scan_id !== "string" || !/^[a-f0-9]{32}$/u.test(body.scan_id)) {
+    throw new TypeError("result coordination malformed");
+  }
+  return body.scan_id;
+}
+
+async function pasteScan(request: Request, env: Env): Promise<Response> {
+  const claims = await sessionClaims(request, env);
+  const binding = coordinator(env);
+  if (
+    claims === null || binding === undefined || !sameOriginMutation(request) ||
+    request.headers.get(CSRF_HEADER) !== claims.csrf
+  ) return json({ error: "unauthorized" }, 401);
+  const text = await boundedText(request, PASTE_LIMITS.max_request_bytes);
+  if (text === null) return json({ error: "invalid_request" }, 400);
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return json({ error: "invalid_request" }, 400);
+  }
+  const input = parsePasteRequest(value);
+  if (input === null) return json({ error: "invalid_request" }, 400);
+  try {
+    const receipt = await executePasteScan(input, {
+      store: (result) => storeResult(binding, claims.sid, result),
+    });
+    return json(receipt, 201);
+  } catch {
+    return json({ error: "scan_unavailable" }, 503);
+  }
+}
+
 export async function handleRequest(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   if (url.pathname === "/api/health" && request.method === "GET") {
@@ -191,6 +242,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
   if (url.pathname === "/api/login" && request.method === "POST") return login(request, env);
   if (url.pathname === "/api/session" && request.method === "GET") return sessionStatus(request, env);
   if (url.pathname === "/api/logout" && request.method === "POST") return logout(request, env);
+  if (url.pathname === "/api/scans/paste" && request.method === "POST") return pasteScan(request, env);
   const result = /^\/api\/results\/([a-f0-9]{32})$/u.exec(url.pathname);
   if (result !== null && request.method === "GET") return getResult(request, env, result[1] as string);
 

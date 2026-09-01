@@ -104,6 +104,48 @@ test("actual Worker login creates a signed cookie and enforces session plus CSRF
   assert.match(logout.headers.get("set-cookie"), /Max-Age=0/);
 });
 
+test("authenticated paste HTML stores results while origin and CSRF stay mandatory", async () => {
+  const { env } = configured();
+  const login = await worker.fetch(loginRequest({
+    username: env.ADMIN_USERNAME, password: env.ADMIN_PASSWORD,
+  }), env);
+  const { csrf_token: csrf } = await login.json();
+  const cookie = login.headers.get("set-cookie");
+  const body = JSON.stringify({
+    mode: "html",
+    base_url: "https://source.example/dir/page",
+    html: '<script>throw 1</script><img src="https://never.invalid/x"><a href="../target">target</a>',
+  });
+  const headers = {
+    cookie, origin: "https://watch.example", "content-type": "application/json", [CSRF_HEADER]: csrf,
+  };
+  const scan = await worker.fetch(new Request("https://watch.example/api/scans/paste", {
+    method: "POST", headers, body,
+  }), env);
+  assert.equal(scan.status, 201);
+  const receipt = await scan.json();
+  assert.equal(receipt.mode, "paste_html");
+  assert.equal(receipt.accepted_targets, 1);
+  assert.equal(receipt.scan_ids.length, 1);
+
+  const stored = await worker.fetch(new Request(
+    `https://watch.example/api/results/${receipt.scan_ids[0]}`,
+    { headers: { cookie } },
+  ), env);
+  assert.equal(stored.status, 200);
+  assert.equal((await stored.json()).result.canonical_target, "https://source.example/target");
+
+  for (const rejectedHeaders of [
+    { ...headers, origin: "https://attacker.example" },
+    { ...headers, [CSRF_HEADER]: "wrong" },
+  ]) {
+    const denied = await worker.fetch(new Request("https://watch.example/api/scans/paste", {
+      method: "POST", headers: rejectedHeaders, body,
+    }), env);
+    assert.equal(denied.status, 401);
+  }
+});
+
 test("wrong, missing, and default credentials deny generically and throttle", async () => {
   const missing = await worker.fetch(loginRequest({ username: "admin", password: "admin" }), {});
   assert.equal(missing.status, 401);
