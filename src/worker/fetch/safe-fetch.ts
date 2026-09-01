@@ -109,11 +109,12 @@ async function dnsQuery(
   if (body.Answer === undefined) return [];
   if (body.Answer.length > 64) throw new TypeError("dns answer limit exceeded");
   const recordType = type === "A" ? 1 : 28;
-  return body.Answer.flatMap((record) => {
-    if (typeof record !== "object" || record === null) return [];
-    const value = record as { type?: unknown; data?: unknown };
-    return value.type === recordType && typeof value.data === "string" ? [value.data] : [];
-  });
+  const addresses: string[] = []; for (const record of body.Answer) {
+    const value = typeof record === "object" && record !== null ? record as { type?: unknown; data?: unknown } : null;
+    if (value === null || !Number.isInteger(value.type) || typeof value.data !== "string") throw new TypeError("dns response invalid");
+    if (value.type === recordType) addresses.push(value.data);
+  }
+  return addresses;
 }
 
 export function createCloudflareDohResolver(
