@@ -13,6 +13,7 @@ export const SAFE_FETCH_LIMITS = {
   max_response_bytes: 200_000,
   per_operation_ms: 3_000,
   total_ms: 8_000,
+  max_dns_response_bytes: 16_384,
 } as const;
 
 export interface SafeFetchEvidence {
@@ -42,6 +43,51 @@ interface DnsJson {
   Answer?: unknown;
 }
 
+async function cancelBody(response: Response): Promise<void> {
+  try { await response.body?.cancel(); } catch { /* best-effort release */ }
+}
+
+async function boundedBytes(
+  response: Response,
+  maximum: number,
+  signal: AbortSignal,
+): Promise<Uint8Array> {
+  const declared = response.headers.get("content-length");
+  if (declared !== null) {
+    const length = Number(declared);
+    if (!Number.isSafeInteger(length) || length < 0) {
+      await cancelBody(response); throw new TypeError("invalid body length");
+    }
+    if (length > maximum) {
+      await cancelBody(response); throw new RangeError("body limit exceeded");
+    }
+  }
+  const reader = response.body?.getReader();
+  if (reader === undefined) throw new TypeError("body unavailable");
+  const abort = () => { void reader.cancel(); };
+  signal.addEventListener("abort", abort, { once: true });
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    if (signal.aborted) throw new DOMException("aborted", "AbortError");
+    while (true) {
+      const { done, value } = await reader.read();
+      if (signal.aborted) throw new DOMException("aborted", "AbortError");
+      if (done) break;
+      size += value.byteLength;
+      if (size > maximum) { await reader.cancel(); throw new RangeError("body limit exceeded"); }
+      chunks.push(value);
+    }
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+    return bytes;
+  } finally {
+    signal.removeEventListener("abort", abort);
+    reader.releaseLock();
+  }
+}
+
 async function dnsQuery(
   hostname: string,
   type: "A" | "AAAA",
@@ -54,8 +100,11 @@ async function dnsQuery(
     redirect: "error",
     signal,
   });
-  if (!response.ok) throw new TypeError("dns response unavailable");
-  const body = await response.json() as DnsJson;
+  if (!response.ok) {
+    await cancelBody(response); throw new TypeError("dns response unavailable");
+  }
+  const bytes = await boundedBytes(response, SAFE_FETCH_LIMITS.max_dns_response_bytes, signal);
+  const body = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as DnsJson;
   if (body.Status !== 0 || body.TC === true || !Array.isArray(body.Answer)) {
     if (body.Status === 0 && body.Answer === undefined) return [];
     throw new TypeError("dns response invalid");
@@ -121,48 +170,19 @@ type BoundedHtml =
 async function boundedHtml(response: Response, signal: AbortSignal): Promise<BoundedHtml> {
   const encoding = response.headers.get("content-encoding")?.trim().toLowerCase();
   if (encoding !== undefined && encoding !== "" && encoding !== "identity") {
+    await cancelBody(response);
     return { ok: false, reason: "unsupported_content_encoding" };
   }
   const mediaType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
-  if (mediaType !== "text/html") return { ok: false, reason: "unsupported_content_type" };
-  const declared = response.headers.get("content-length");
-  if (declared !== null) {
-    const length = Number(declared);
-    if (!Number.isSafeInteger(length) || length < 0) return { ok: false, reason: "invalid_response" };
-    if (length > SAFE_FETCH_LIMITS.max_response_bytes) return { ok: false, reason: "response_too_large" };
+  if (mediaType !== "text/html") {
+    await cancelBody(response); return { ok: false, reason: "unsupported_content_type" };
   }
-  const reader = response.body?.getReader();
-  if (reader === undefined) return { ok: false, reason: "invalid_response" };
-  const abort = () => { void reader.cancel(); };
-  signal.addEventListener("abort", abort, { once: true });
-  const chunks: Uint8Array[] = [];
-  let size = 0;
   try {
-    if (signal.aborted) throw new DOMException("aborted", "AbortError");
-    while (true) {
-      const { done, value } = await reader.read();
-      if (signal.aborted) throw new DOMException("aborted", "AbortError");
-      if (done) break;
-      size += value.byteLength;
-      if (size > SAFE_FETCH_LIMITS.max_response_bytes) {
-        await reader.cancel();
-        return { ok: false, reason: "response_too_large" };
-      }
-      chunks.push(value);
-    }
-    const bytes = new Uint8Array(size);
-    let offset = 0;
-    for (const chunk of chunks) {
-      bytes.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
+    const bytes = await boundedBytes(response, SAFE_FETCH_LIMITS.max_response_bytes, signal);
     return { ok: true, html: new TextDecoder("utf-8", { fatal: true }).decode(bytes) };
   } catch (error) {
     if (signal.aborted) throw error;
-    return { ok: false, reason: "invalid_response" };
-  } finally {
-    signal.removeEventListener("abort", abort);
-    reader.releaseLock();
+    return { ok: false, reason: error instanceof RangeError ? "response_too_large" : "invalid_response" };
   }
 }
 
@@ -226,7 +246,7 @@ export async function safeFetchHtml(
     }
 
     if (response.status >= 300 && response.status < 400) {
-      void response.body?.cancel();
+      await cancelBody(response);
       const location = response.headers.get("location");
       if (location === null) return failed("redirect_missing_location", trace);
       if (redirects >= SAFE_FETCH_LIMITS.max_redirects) return failed("redirect_limit", trace);
@@ -241,7 +261,7 @@ export async function safeFetchHtml(
       continue;
     }
     if (response.status < 200 || response.status >= 300) {
-      void response.body?.cancel();
+      await cancelBody(response);
       return failed("invalid_response", trace);
     }
     const bodyTimeout = remaining(started, now, operationMs, totalMs);

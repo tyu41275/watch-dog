@@ -9,9 +9,11 @@ export type AddressAdmission =
   | { ok: true; hostname: string; addresses: string[] }
   | { ok: false; reason: Extract<FetchRejectionReason, "unsafe_address" | "dns_failure" | "mixed_address"> };
 
-const NON_PUBLIC_NAMES = [
-  "localhost", ".localhost", ".local", ".internal", ".home.arpa",
-  ".example", ".invalid", ".test", ".onion",
+// IANA special-use registries, checked 2026-09-01. Broad entries subsume
+// narrower assignments; the conservative policy rejects every listed space.
+const SPECIAL_NAMES = [
+  "alt", "arpa", "example", "example.com", "example.net", "example.org",
+  "invalid", "local", "localhost", "onion", "test", "internal",
 ];
 
 function ipv4(value: string): number[] | null {
@@ -47,24 +49,6 @@ function ipv6(value: string): Uint8Array | null {
   return bytes;
 }
 
-function publicIpv4(bytes: number[]): boolean {
-  const [a, b, c] = bytes as [number, number, number, number];
-  return !(
-    a === 0 || a === 10 || a === 127 ||
-    (a === 100 && b >= 64 && b <= 127) ||
-    (a === 169 && b === 254) ||
-    (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && b === 0 && c === 0) ||
-    (a === 192 && b === 0 && c === 2) ||
-    (a === 192 && b === 88 && c === 99) ||
-    (a === 192 && b === 168) ||
-    (a === 198 && (b === 18 || b === 19)) ||
-    (a === 198 && b === 51 && c === 100) ||
-    (a === 203 && b === 0 && c === 113) ||
-    a >= 224
-  );
-}
-
 function prefix(bytes: Uint8Array, expected: number[], bits: number): boolean {
   const full = Math.floor(bits / 8);
   for (let index = 0; index < full; index += 1) {
@@ -76,11 +60,26 @@ function prefix(bytes: Uint8Array, expected: number[], bits: number): boolean {
   return ((bytes[full] as number) & mask) === ((expected[full] as number) & mask);
 }
 
+const SPECIAL_IPV4: [number[], number][] = [
+  [[0], 8], [[10], 8], [[100, 64], 10], [[127], 8], [[169, 254], 16],
+  [[172, 16], 12], [[192, 0, 0], 24], [[192, 0, 2], 24],
+  [[192, 31, 196], 24], [[192, 52, 193], 24], [[192, 88, 99], 24],
+  [[192, 168], 16], [[192, 175, 48], 24], [[198, 18], 15],
+  [[198, 51, 100], 24], [[203, 0, 113], 24], [[224], 3],
+];
+
+function publicIpv4(bytes: number[]): boolean {
+  const packed = Uint8Array.from(bytes);
+  return !SPECIAL_IPV4.some(([expected, bits]) => prefix(packed, expected, bits));
+}
+
 function publicIpv6(bytes: Uint8Array): boolean {
   if (!prefix(bytes, [0x20], 3)) return false;
   if (prefix(bytes, [0x20, 0x01, 0x00], 23)) return false;
   if (prefix(bytes, [0x20, 0x01, 0x0d, 0xb8], 32)) return false;
   if (prefix(bytes, [0x20, 0x02], 16)) return false;
+  if (prefix(bytes, [0x26, 0x20, 0x00, 0x4f, 0x80, 0x00], 48)) return false;
+  if (prefix(bytes, [0x3f, 0xff, 0x00], 20)) return false;
   return true;
 }
 
@@ -103,7 +102,7 @@ export async function admitPublicHost(
   resolver: AddressResolver,
   signal: AbortSignal,
 ): Promise<AddressAdmission> {
-  const normalized = hostname.toLowerCase();
+  const normalized = hostname.toLowerCase().replace(/\.+$/u, "");
   const literal = literalAddress(normalized);
   if (literal !== null) {
     return isPublicAddress(literal)
@@ -112,7 +111,7 @@ export async function admitPublicHost(
   }
   if (
     !normalized.includes(".") ||
-    NON_PUBLIC_NAMES.some((suffix) => normalized === suffix || normalized.endsWith(suffix))
+    SPECIAL_NAMES.some((name) => normalized === name || normalized.endsWith(`.${name}`))
   ) return { ok: false, reason: "unsafe_address" };
   let resolved: readonly string[];
   try {

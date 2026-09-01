@@ -1,22 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-
 import { FETCH_REJECTION_REASONS } from "../dist/shared/canonicalize.js";
 
-import {
-  admitPublicHost,
-  isPublicAddress,
-} from "../dist/worker/fetch/address.js";
-import {
-  PASTE_LIMITS,
-  executePasteScan,
-  parsePasteRequest,
-} from "../dist/worker/fetch/paste.js";
-import {
-  SAFE_FETCH_LIMITS,
-  createCloudflareDohResolver,
-  safeFetchHtml,
-} from "../dist/worker/fetch/safe-fetch.js";
+import { admitPublicHost, isPublicAddress } from "../dist/worker/fetch/address.js";
+import { PASTE_LIMITS, executePasteScan, parsePasteRequest } from "../dist/worker/fetch/paste.js";
+import { SAFE_FETCH_LIMITS, createCloudflareDohResolver, safeFetchHtml } from "../dist/worker/fetch/safe-fetch.js";
 
 const PUBLIC_ADDRESSES = ["93.184.216.34", "2606:4700:4700::1111"];
 const publicResolver = async () => PUBLIC_ADDRESSES;
@@ -27,15 +15,15 @@ test("address admission rejects every special family and mixed DNS before fetch"
     ["10.0.0.1", false], ["100.64.0.1", false], ["127.0.0.1", false],
     ["169.254.169.254", false], ["172.31.0.1", false], ["192.168.1.1", false],
     ["192.0.2.1", false], ["198.18.0.1", false], ["198.51.100.1", false],
+    ["192.31.196.1", false], ["192.52.193.1", false], ["192.175.48.1", false],
     ["203.0.113.1", false], ["224.0.0.1", false], ["255.255.255.255", false],
     ["2606:4700:4700::1111", true], ["::", false], ["::1", false],
     ["::ffff:127.0.0.1", false], ["64:ff9b::808:808", false],
     ["2001:db8::1", false], ["2002:0808:0808::", false], ["fc00::1", false],
+    ["2620:4f:8000::1", false], ["3fff::1", false], ["5f00::1", false],
     ["fe80::1", false], ["ff02::1", false],
   ];
-  for (const [address, expected] of cases) {
-    assert.equal(isPublicAddress(address), expected, address);
-  }
+  for (const [address, expected] of cases) assert.equal(isPublicAddress(address), expected, address);
 
   let resolutions = 0;
   const controller = new AbortController();
@@ -44,23 +32,20 @@ test("address admission rejects every special family and mixed DNS before fetch"
     return PUBLIC_ADDRESSES;
   }, controller.signal), { ok: false, reason: "unsafe_address" });
   assert.equal(resolutions, 0);
-  assert.deepEqual(
-    await admitPublicHost("mixed.example.com", async () => ["93.184.216.34", "10.0.0.1"], controller.signal),
-    { ok: false, reason: "mixed_address" },
-  );
-  assert.equal((await admitPublicHost("public.example.com", publicResolver, controller.signal)).ok, true);
-  assert.deepEqual(
-    await admitPublicHost("localhost", publicResolver, controller.signal),
-    { ok: false, reason: "unsafe_address" },
-  );
-  assert.deepEqual(
-    await admitPublicHost("reserved.example", publicResolver, controller.signal),
-    { ok: false, reason: "unsafe_address" },
-  );
-  assert.deepEqual(
-    await admitPublicHost("missing.example.com", async () => [], controller.signal),
-    { ok: false, reason: "dns_failure" },
-  );
+  assert.deepEqual(await admitPublicHost(
+    "mixed.example.co", async () => ["93.184.216.34", "10.0.0.1"], controller.signal,
+  ), { ok: false, reason: "mixed_address" });
+  assert.equal((await admitPublicHost("public.example.co", publicResolver, controller.signal)).ok, true);
+  for (const hostname of ["localhost", "localhost.", "foo.localhost.", "example.com.", "service.arpa."]) {
+    assert.deepEqual(await admitPublicHost(hostname, async () => {
+      resolutions += 1; return PUBLIC_ADDRESSES;
+    }, controller.signal), { ok: false, reason: "unsafe_address" }, hostname);
+  }
+  assert.equal(resolutions, 0);
+  assert.deepEqual(await admitPublicHost("reserved.example", publicResolver, controller.signal),
+    { ok: false, reason: "unsafe_address" });
+  assert.deepEqual(await admitPublicHost("missing.example.co", async () => [], controller.signal),
+    { ok: false, reason: "dns_failure" });
 });
 
 test("fetch rejection reasons are a closed literal vocabulary", () => {
@@ -85,7 +70,7 @@ test("Cloudflare DoH resolver bounds and extracts only A and AAAA answers", asyn
         : [{ type: 1, data: PUBLIC_ADDRESSES[0] }],
     });
   });
-  const addresses = await resolver("public.example.com", new AbortController().signal);
+  const addresses = await resolver("public.example.co", new AbortController().signal);
   assert.deepEqual(addresses, PUBLIC_ADDRESSES);
   assert.equal(calls.length, 2);
   assert.ok(calls.every(({ init }) => init.redirect === "error"));
@@ -93,12 +78,26 @@ test("Cloudflare DoH resolver bounds and extracts only A and AAAA answers", asyn
 
   const invalid = createCloudflareDohResolver(async () => Response.json({ Status: 2 }));
   await assert.rejects(invalid("bad.example", new AbortController().signal), /dns response invalid/);
+
+  const oversized = createCloudflareDohResolver(async () => Response.json({
+    Status: 0, Answer: [], padding: "x".repeat(SAFE_FETCH_LIMITS.max_dns_response_bytes),
+  }));
+  await assert.rejects(oversized("large.example.co", new AbortController().signal), /body limit/);
+
+  let cancelled = 0;
+  const hanging = createCloudflareDohResolver(async () => new Response(new ReadableStream({
+    pull() {}, cancel() { cancelled += 1; },
+  })));
+  const abort = new AbortController();
+  setTimeout(() => abort.abort(), 5);
+  await assert.rejects(hanging("slow.example.co", abort.signal));
+  assert.equal(cancelled, 2);
 });
 
 test("safe fetch revalidates relative redirects and returns bounded HTML evidence", async () => {
   const fetchCalls = [];
   const resolveCalls = [];
-  const result = await safeFetchHtml("HTTPS://Public.Example.com/start#fragment", {
+  const result = await safeFetchHtml("HTTPS://Public.Example.co/start#fragment", {
     resolver: async (hostname) => { resolveCalls.push(hostname); return PUBLIC_ADDRESSES; },
     fetcher: async (url, init) => {
       fetchCalls.push({ url, init });
@@ -107,10 +106,9 @@ test("safe fetch revalidates relative redirects and returns bounded HTML evidenc
         : new Response('<a href="/next">next</a>', { headers: { "content-type": "text/html; charset=utf-8" } });
     },
   });
-  assert.equal(result.ok, true);
-  assert.equal(result.html, '<a href="/next">next</a>');
-  assert.deepEqual(result.evidence.redirect_chain, ["https://public.example.com/final"]);
-  assert.deepEqual(resolveCalls, ["public.example.com", "public.example.com"]);
+  assert.equal(result.ok && result.html, '<a href="/next">next</a>');
+  assert.deepEqual(result.evidence.redirect_chain, ["https://public.example.co/final"]);
+  assert.deepEqual(resolveCalls, ["public.example.co", "public.example.co"]);
   assert.equal(fetchCalls.length, 2);
   assert.ok(fetchCalls.every(({ init }) => init.redirect === "manual"));
   assert.ok(fetchCalls.every(({ init }) => init.headers["accept-encoding"] === "identity"));
@@ -119,7 +117,7 @@ test("safe fetch revalidates relative redirects and returns bounded HTML evidenc
 
 test("redirect private targets, loops, missing locations, and limits fail closed", async () => {
   let calls = 0;
-  const privateRedirect = await safeFetchHtml("https://public.example.com/start", {
+  const privateRedirect = await safeFetchHtml("https://public.example.co/start", {
     resolver: publicResolver,
     fetcher: async () => {
       calls += 1;
@@ -129,7 +127,7 @@ test("redirect private targets, loops, missing locations, and limits fail closed
   assert.equal(privateRedirect.reason, "unsafe_address");
   assert.equal(calls, 1, "private redirect must not reach outbound fetch");
 
-  const loop = await safeFetchHtml("https://public.example.com/a", {
+  const loop = await safeFetchHtml("https://public.example.co/a", {
     resolver: publicResolver,
     fetcher: async (url) => new Response(null, {
       status: 302,
@@ -138,13 +136,13 @@ test("redirect private targets, loops, missing locations, and limits fail closed
   });
   assert.equal(loop.reason, "redirect_loop");
 
-  const missing = await safeFetchHtml("https://public.example.com/", {
+  const missing = await safeFetchHtml("https://public.example.co/", {
     resolver: publicResolver,
     fetcher: async () => new Response(null, { status: 302 }),
   });
   assert.equal(missing.reason, "redirect_missing_location");
 
-  const limited = await safeFetchHtml("https://public.example.com/r0", {
+  const limited = await safeFetchHtml("https://public.example.co/r0", {
     resolver: publicResolver,
     fetcher: async (url) => {
       const next = Number(new URL(url).pathname.slice(2)) + 1;
@@ -168,24 +166,23 @@ test("response, encoding, byte, fetch, DNS, and time limits are typed", async ()
     ["status", () => new Response("no", { status: 503 }), "invalid_response"],
   ];
   for (const [name, response, reason] of cases) {
-    const result = await safeFetchHtml("https://public.example.com/", {
-      resolver: publicResolver,
-      fetcher: async () => response(),
+    const result = await safeFetchHtml("https://public.example.co/", {
+      resolver: publicResolver, fetcher: async () => response(),
     });
     assert.equal(result.reason, reason, name);
   }
-  const failed = await safeFetchHtml("https://public.example.com/", {
-    resolver: publicResolver,
-    fetcher: async () => { throw new TypeError("network unavailable"); },
+  const failed = await safeFetchHtml("https://public.example.co/", {
+    resolver: publicResolver, fetcher: async () => { throw new TypeError("network unavailable"); },
   });
   assert.equal(failed.reason, "fetch_failed");
-  const dns = await safeFetchHtml("https://missing.example.com/", {
-    resolver: async () => { throw new TypeError("dns unavailable"); },
-    fetcher: async () => { throw new Error("must not fetch"); },
+  const dns = await safeFetchHtml("https://missing.example.co/", {
+    resolver: async () => { throw new TypeError("dns unavailable"); }, fetcher: async () => {
+      throw new Error("must not fetch");
+    },
   });
   assert.equal(dns.reason, "dns_failure");
 
-  const timeout = await safeFetchHtml("https://public.example.com/", {
+  const timeout = await safeFetchHtml("https://public.example.co/", {
     resolver: publicResolver,
     operation_ms: 5,
     fetcher: async (_url, { signal }) => new Promise((_resolve, reject) => {
@@ -194,24 +191,43 @@ test("response, encoding, byte, fetch, DNS, and time limits are typed", async ()
   });
   assert.equal(timeout.reason, "timeout");
 
+  const invalidUtf8 = await safeFetchHtml("https://public.example.co/", {
+    resolver: publicResolver, fetcher: async () => new Response(new Uint8Array([0xc3, 0x28]), {
+      headers: { "content-type": "text/html" },
+    }),
+  });
+  assert.equal(invalidUtf8.reason, "invalid_response");
+
+  let cancelledOversize = false;
+  const declaredOversize = await safeFetchHtml("https://public.example.co/", {
+    resolver: publicResolver,
+    fetcher: async () => new Response(new ReadableStream({
+      pull() {}, cancel() { cancelledOversize = true; },
+    }), { headers: {
+      "content-type": "text/html",
+      "content-length": String(SAFE_FETCH_LIMITS.max_response_bytes + 1),
+    } }),
+  });
+  assert.deepEqual([declaredOversize.reason, cancelledOversize], ["response_too_large", true]);
+
   const hangingBody = new ReadableStream({ pull() {} });
-  const bodyTimeout = await safeFetchHtml("https://public.example.com/", {
+  const bodyTimeout = await safeFetchHtml("https://public.example.co/", {
     resolver: publicResolver,
     operation_ms: 5,
     fetcher: async () => new Response(hangingBody, { headers: { "content-type": "text/html" } }),
   });
   assert.equal(bodyTimeout.reason, "timeout");
 
-  const tooLong = await safeFetchHtml(`https://public.example.com/${"x".repeat(2_100)}`);
+  const tooLong = await safeFetchHtml(`https://public.example.co/${"x".repeat(2_100)}`);
   assert.equal(tooLong.reason, "url_too_long");
   assert.equal(tooLong.evidence.requested_url, "");
 });
 
 test("paste input is closed and local HTML stays inert on the shared pipeline", async () => {
-  assert.deepEqual(parsePasteRequest({ mode: "url", url: "https://public.example.com/" }), {
-    mode: "url", url: "https://public.example.com/",
+  assert.deepEqual(parsePasteRequest({ mode: "url", url: "https://public.example.co/" }), {
+    mode: "url", url: "https://public.example.co/",
   });
-  assert.equal(parsePasteRequest({ mode: "url", url: "https://public.example.com/", extra: true }), null);
+  assert.equal(parsePasteRequest({ mode: "url", url: "https://public.example.co/", extra: true }), null);
   assert.equal(parsePasteRequest({ mode: "html", html: "x" }), null);
 
   const stored = [];
@@ -238,7 +254,7 @@ test("paste input is closed and local HTML stays inert on the shared pipeline", 
 test("URL paste provenance is paste_url and failures produce stored typed fallback", async () => {
   const stored = [];
   const store = async (result) => { stored.push(structuredClone(result)); return "a".repeat(32); };
-  const success = await executePasteScan({ mode: "url", url: "https://public.example.com/page" }, {
+  const success = await executePasteScan({ mode: "url", url: "https://public.example.co/page" }, {
     now: () => new Date("2026-09-01T03:00:00Z"),
     store,
     fetch_seams: {
@@ -263,5 +279,16 @@ test("URL paste provenance is paste_url and failures produce stored typed fallba
     mode: "html", base_url: "https://source.example/", html: "x".repeat(200_001),
   }, { store });
   assert.equal(oversized.unscannable_reason, "input_too_large");
+
+  for (const input of [
+    { mode: "html", base_url: `https://source.example/${"b".repeat(2_040)}/`, html: '<a href="relative">x</a>' },
+    { mode: "html", base_url: "https://source.example/", html: `<a href="${"r".repeat(2_048)}">x</a>` },
+  ]) {
+    stored.length = 0;
+    const bounded = await executePasteScan(input, { store });
+    assert.equal(bounded.unscannable_reason, "url_too_long");
+    assert.equal(bounded.accepted_targets, 0);
+    assert.equal(stored[0].analysis_state, "unscannable");
+  }
   assert.equal(PASTE_LIMITS.max_results, 16);
 });

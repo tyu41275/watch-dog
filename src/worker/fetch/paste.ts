@@ -10,6 +10,7 @@ import {
   extractHtmlLinkCandidates,
 } from "../../shared/extract-html.js";
 import {
+  SAFE_FETCH_LIMITS,
   safeFetchHtml,
   type SafeFetchEvidence,
   type SafeFetchSeams,
@@ -120,15 +121,17 @@ export async function executePasteScan(
         fetch_evidence: null,
       };
     }
-    const base = canonicalizeUrl(request.base_url);
-    if (!base.ok) {
+    const base = request.base_url.length <= SAFE_FETCH_LIMITS.max_url_chars
+      ? canonicalizeUrl(request.base_url) : null;
+    if (base === null || !base.ok || base.target.canonical_url.length > SAFE_FETCH_LIMITS.max_url_chars) {
+      const reason: UnscannableReason = base === null || base.ok ? "url_too_long" : base.reason;
       return {
         mode,
-        scan_ids: await storeAll([unavailable(mode, base.reason, analyzedAt)], dependencies),
+        scan_ids: await storeAll([unavailable(mode, reason, analyzedAt)], dependencies),
         accepted_targets: 0,
         rejected_candidates: 0,
         truncated: false,
-        unscannable_reason: base.reason,
+        unscannable_reason: reason,
         fetch_evidence: null,
       };
     }
@@ -148,15 +151,23 @@ export async function executePasteScan(
     }));
   }
   const collection = collectLinkCandidates(candidates);
-  let onlyReason: UnscannableReason | null = collection.targets.length === 0 &&
-    collection.rejected.length === 1 ? (collection.rejected[0]?.reason ?? null) : null;
-  const results: ScanResult[] = collection.targets.map((target) => aggregateAnalysis({
+  const targets = collection.targets.filter(
+    (target) => target.canonical_url.length <= SAFE_FETCH_LIMITS.max_url_chars,
+  );
+  const oversizedTargets = collection.targets.length - targets.length;
+  const rejectionReasons: UnscannableReason[] = [
+    ...collection.rejected.map(({ reason }) => reason),
+    ...Array<UnscannableReason>(oversizedTargets).fill("url_too_long"),
+  ];
+  let onlyReason: UnscannableReason | null = targets.length === 0 && rejectionReasons.length === 1
+    ? (rejectionReasons[0] ?? null) : null;
+  const results: ScanResult[] = targets.map((target) => aggregateAnalysis({
     scan_id: "pending",
     mode,
     analyzed_at: analyzedAt,
     target,
   }));
-  results.push(...collection.rejected.map(({ reason }) => unavailable(mode, reason, analyzedAt)));
+  results.push(...rejectionReasons.map((reason) => unavailable(mode, reason, analyzedAt)));
   if (results.length === 0) {
     onlyReason = "no_candidates";
     results.push(unavailable(mode, onlyReason, analyzedAt));
@@ -171,8 +182,8 @@ export async function executePasteScan(
   return {
     mode,
     scan_ids: await storeAll(retained, dependencies),
-    accepted_targets: collection.targets.length,
-    rejected_candidates: collection.rejected.length,
+    accepted_targets: targets.length,
+    rejected_candidates: rejectionReasons.length,
     truncated,
     unscannable_reason: onlyReason,
     fetch_evidence: fetchEvidence,
