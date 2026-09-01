@@ -1,6 +1,6 @@
-# Google Safe Browsing integration
+# Google Safe Browsing integration (verified 2026-09-01)
 
-Verified 2026-09-01: Watch Dog uses Google Safe Browsing v5 `urls.search` as its one live provider adapter. It is server-only, normalized and bounded; it does not own the risk label, analysis state or confidence.
+Watch Dog uses Google Safe Browsing v5 `urls.search` as its one live provider adapter. It is server-only, normalized and bounded; it does not own the risk label, analysis state or confidence.
 
 ## Terms and activation boundary
 

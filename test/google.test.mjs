@@ -133,7 +133,8 @@ test("recognized threats map to closed categories with Google-only attribution a
     ["https://a.example.test/path", "ftp://user:pass@example.test:9999/#fragment", "match"],
     ["https://a.example.test/path", "https://example.test/other/", "error"],
     ["https://a.example.test/a//b/%257E?q=one", "https://example.test/a/b/", "match"],
-    ["https://a.example.test/path?q=one", "https://example.test/path?q=two", "error"],
+    ["https://a.example.test/path?q=one", "https://example.test/path?q=two", "error"], ["https://a.example.test/Path", "https://example.test/path", "error"],
+    ["https://a.example.test/caf%C3%A9", "https://example.test/café", "match"], ["https://a.example.test/%F0%9F%90%B6", "https://example.test/🐶", "match"],
   ];
   for (const [target, expressionUrl, state] of expressions) {
     const adapter = new GoogleSafeBrowsingAdapter("key", { fetcher: async () => json({

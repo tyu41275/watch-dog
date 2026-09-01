@@ -127,7 +127,7 @@ async function boundedJson(response: Response, signal: AbortSignal): Promise<unk
 }
 
 function expressionUrl(value: string): URL {
-  let decoded = (value.split("#", 1)[0] ?? "").replace(/[\t\r\n]/gu, "");
+  let decoded = encodeURI((value.split("#", 1)[0] ?? "").replace(/[\t\r\n]/gu, ""));
   while (/%[\da-f]{2}/iu.test(decoded)) decoded = decoded.replace(
     /%([\da-f]{2})/giu, (_match, octet: string) => String.fromCharCode(Number.parseInt(octet, 16)),
   );
