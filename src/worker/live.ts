@@ -20,6 +20,10 @@ export interface LiveRequest {
   document_url: string;
   observed_at: string;
   candidates: ExtractedLinkCandidate[];
+  extraction_rejections: Array<{
+    occurrence_index: number;
+    reason: "url_too_long";
+  }>;
 }
 
 export interface LiveReceipt {
@@ -59,22 +63,24 @@ export function parseLiveRequest(
 ): LiveRequest | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   const data = value as Record<string, unknown>;
-  if (!exactKeys(data, ["candidates", "document_url", "observed_at"])) return null;
+  if (!exactKeys(data, ["candidates", "document_url", "extraction_rejections", "observed_at"])) {
+    return null;
+  }
   if (typeof data.document_url !== "string" || typeof data.observed_at !== "string") return null;
-  if (!Array.isArray(data.candidates) || data.candidates.length > LIVE_LIMITS.max_candidates) return null;
+  if (!Array.isArray(data.candidates) || !Array.isArray(data.extraction_rejections)) return null;
+  if (data.candidates.length + data.extraction_rejections.length > LIVE_LIMITS.max_candidates) return null;
   const expectedDocument = new URL("/reference", expectedOrigin).href;
   if (data.document_url !== expectedDocument || !validTimestamp(data.observed_at)) return null;
   const observedMs = Date.parse(data.observed_at);
   if (observedMs < nowMs - 5 * 60_000 || observedMs > nowMs + 60_000) return null;
 
   try {
-    const candidates = data.candidates.map((value, index) => {
+    const candidates = data.candidates.map((value) => {
       const candidate = parseExtractedLinkCandidate(value);
       const base = new URL(candidate.base_url);
       if (
         candidate.provenance.source !== "live_page" ||
         candidate.provenance.document_url !== expectedDocument ||
-        candidate.provenance.occurrence_index !== index ||
         candidate.provenance.extracted_at !== data.observed_at ||
         base.origin !== expectedOrigin ||
         candidate.base_url.length > LIVE_LIMITS.max_url_chars ||
@@ -83,7 +89,35 @@ export function parseLiveRequest(
       ) throw new TypeError("invalid live candidate");
       return candidate;
     });
-    return { document_url: data.document_url, observed_at: data.observed_at, candidates };
+    const extractionRejections = data.extraction_rejections.map((value) => {
+      if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        throw new TypeError("invalid extraction rejection");
+      }
+      const rejection = value as Record<string, unknown>;
+      if (
+        !exactKeys(rejection, ["occurrence_index", "reason"]) ||
+        !Number.isSafeInteger(rejection.occurrence_index) ||
+        (rejection.occurrence_index as number) < 0 ||
+        rejection.reason !== "url_too_long"
+      ) throw new TypeError("invalid extraction rejection");
+      return {
+        occurrence_index: rejection.occurrence_index as number,
+        reason: "url_too_long" as const,
+      };
+    });
+    const indices = [
+      ...candidates.map(({ provenance }) => provenance.occurrence_index),
+      ...extractionRejections.map(({ occurrence_index }) => occurrence_index),
+    ].sort((left, right) => left - right);
+    if (indices.some((value, index) => value !== index)) {
+      throw new TypeError("live occurrence indices must be complete and unique");
+    }
+    return {
+      document_url: data.document_url,
+      observed_at: data.observed_at,
+      candidates,
+      extraction_rejections: extractionRejections,
+    };
   } catch {
     return null;
   }
@@ -107,13 +141,29 @@ export async function executeLiveScan(
   const analyzedAt = new Date(Math.max(serverTime.getTime(), Date.parse(request.observed_at)))
     .toISOString();
   const collection = collectLinkCandidates(request.candidates);
-  const results: ScanResult[] = collection.targets.map((target) => aggregateAnalysis({
+  const targets = collection.targets.filter(
+    ({ canonical_url }) => canonical_url.length <= LIVE_LIMITS.max_url_chars,
+  );
+  const rejections: Array<{ occurrence_index: number; reason: UnscannableReason }> = [
+    ...request.extraction_rejections,
+    ...collection.rejected.map(({ candidate, reason }) => ({
+      occurrence_index: candidate.provenance.occurrence_index,
+      reason,
+    })),
+    ...collection.targets
+      .filter(({ canonical_url }) => canonical_url.length > LIVE_LIMITS.max_url_chars)
+      .flatMap(({ occurrences }) => occurrences.map(({ candidate }) => ({
+        occurrence_index: candidate.provenance.occurrence_index,
+        reason: "url_too_long" as const,
+      }))),
+  ].sort((left, right) => left.occurrence_index - right.occurrence_index);
+  const results: ScanResult[] = targets.map((target) => aggregateAnalysis({
     scan_id: "pending",
     mode: "live_page",
     analyzed_at: analyzedAt,
     target,
   }));
-  results.push(...collection.rejected.map(({ reason }) => unavailable(reason, analyzedAt)));
+  results.push(...rejections.map(({ reason }) => unavailable(reason, analyzedAt)));
   if (results.length === 0) results.push(unavailable("no_candidates", analyzedAt));
   const truncated = results.length > LIVE_LIMITS.max_results;
   const retained = results.slice(0, LIVE_LIMITS.max_results);
@@ -127,20 +177,17 @@ export async function executeLiveScan(
   return {
     mode: "live_page",
     scan_ids: scanIds,
-    observed_candidates: request.candidates.length,
-    accepted_targets: collection.targets.length,
-    rejected_candidates: collection.rejected.length,
+    observed_candidates: request.candidates.length + request.extraction_rejections.length,
+    accepted_targets: targets.length,
+    rejected_candidates: rejections.length,
     truncated,
     page_evidence_trust: "untrusted",
-    targets: collection.targets.slice(0, LIVE_LIMITS.max_results).map((target) => ({
+    targets: targets.slice(0, LIVE_LIMITS.max_results).map((target) => ({
       canonical_url: target.canonical_url,
       occurrence_indices: target.occurrences.map(({ candidate }) =>
         candidate.provenance.occurrence_index),
       anchor_text_variants: target.anchor_text_variants,
     })),
-    rejections: collection.rejected.slice(0, LIVE_LIMITS.max_results).map(({ candidate, reason }) => ({
-      occurrence_index: candidate.provenance.occurrence_index,
-      reason,
-    })),
+    rejections: rejections.slice(0, LIVE_LIMITS.max_results),
   };
 }

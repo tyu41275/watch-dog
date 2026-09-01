@@ -12,7 +12,7 @@ import worker from "../dist/worker/index.js";
 import {
   WEBMCP_LIMITS,
   createInspectCurrentPageTool,
-  extractRenderedCandidates,
+  extractRenderedPage,
   inspectCurrentPage,
   registerBrowserTool,
 } from "../public/webmcp.js";
@@ -64,6 +64,33 @@ function page(anchors) {
   };
 }
 
+function sessionResponse() {
+  return Response.json({
+    authenticated: true,
+    csrf_token: "c".repeat(32),
+    expires_at: "2026-09-01T07:00:00.000Z",
+  });
+}
+
+function receiptResponse(overrides = {}) {
+  return Response.json({
+    mode: "live_page",
+    scan_ids: ["a".repeat(32)],
+    observed_candidates: 1,
+    accepted_targets: 1,
+    rejected_candidates: 0,
+    truncated: false,
+    page_evidence_trust: "untrusted",
+    targets: [{
+      canonical_url: "https://watch.example/one",
+      occurrence_indices: [0],
+      anchor_text_variants: ["one"],
+    }],
+    rejections: [],
+    ...overrides,
+  }, { status: 201 });
+}
+
 test("live request parsing is exact, bounded, route-owned, and timestamp-bounded", () => {
   const observedAt = "2026-09-01T06:30:00.000Z";
   const now = Date.parse(observedAt);
@@ -71,6 +98,7 @@ test("live request parsing is exact, bounded, route-owned, and timestamp-bounded
     document_url: "https://watch.example/reference",
     observed_at: observedAt,
     candidates: [candidate("./one", "one", 0, observedAt)],
+    extraction_rejections: [],
   };
   assert.deepEqual(parseLiveRequest(value, "https://watch.example", now), value);
   for (const invalid of [
@@ -97,6 +125,7 @@ test("live candidates use shared canonicalization, deduplication, rejection, and
       candidate("mailto:help@example.com", "Mail", 2, observedAt),
       candidate("https://accounts.invalid/login", "https://accounts.example/login", 3, observedAt),
     ],
+    extraction_rejections: [],
   };
   const receipt = await executeLiveScan(request, {
     now: () => new Date(observedAt),
@@ -122,6 +151,37 @@ test("live candidates use shared canonicalization, deduplication, rejection, and
   assert.equal(stored[2].analysis_state, "unscannable");
 });
 
+test("raw and post-resolution URL limits retain typed live rejections", async () => {
+  const observedAt = "2026-09-01T06:30:00.000Z";
+  const rawHref = `./${"x".repeat(LIVE_LIMITS.max_href_chars - 2)}`;
+  assert.equal(rawHref.length, LIVE_LIMITS.max_href_chars);
+  const stored = [];
+  const receipt = await executeLiveScan({
+    document_url: "https://watch.example/reference",
+    observed_at: observedAt,
+    candidates: [candidate(rawHref, "long relative", 0, observedAt)],
+    extraction_rejections: [],
+  }, {
+    now: () => new Date(observedAt),
+    store: async (result) => { stored.push(result); return "a".repeat(32); },
+  });
+  assert.equal(new URL(rawHref, "https://watch.example/reference").href.length, 2_068);
+  assert.deepEqual(receipt.targets, []);
+  assert.deepEqual(receipt.rejections, [{ occurrence_index: 0, reason: "url_too_long" }]);
+  assert.equal(receipt.accepted_targets, 0);
+  assert.equal(stored[0].analysis_state, "unscannable");
+  assert.match(stored[0].limitations[0], /url_too_long/);
+
+  const extracted = extractRenderedPage(page([
+    anchor("x".repeat(WEBMCP_LIMITS.maxHrefChars + 1), "oversized"),
+    anchor("./retained", "retained"),
+  ]), observedAt);
+  assert.deepEqual(extracted.extraction_rejections, [
+    { occurrence_index: 0, reason: "url_too_long" },
+  ]);
+  assert.equal(extracted.candidates[0].provenance.occurrence_index, 1);
+});
+
 test("the fixed Worker route requires session, origin, and CSRF then stores owned results", async () => {
   const env = configured();
   const secrets = readAuthSecrets(env);
@@ -138,6 +198,7 @@ test("the fixed Worker route requires session, origin, and CSRF then stores owne
     document_url: "https://watch.example/reference",
     observed_at: observedAt,
     candidates: [candidate("./delayed-evidence", "delayed", 0, observedAt)],
+    extraction_rejections: [],
   });
   const endpoint = "https://watch.example/api/scans/live";
   const denied = await worker.fetch(new Request(endpoint, {
@@ -161,6 +222,22 @@ test("the fixed Worker route requires session, origin, and CSRF then stores owne
     { headers: { cookie } },
   ), env);
   assert.equal((await result.json()).result.mode, "live_page");
+
+  const overlong = `./${"x".repeat(LIVE_LIMITS.max_href_chars - 2)}`;
+  const rejectedBody = JSON.stringify({
+    document_url: "https://watch.example/reference",
+    observed_at: observedAt,
+    candidates: [candidate(overlong, "long", 0, observedAt)],
+    extraction_rejections: [],
+  });
+  const rejected = await worker.fetch(new Request(endpoint, {
+    method: "POST", body: rejectedBody,
+    headers: { cookie, origin: "https://watch.example", "x-watchdog-csrf": statusBody.csrf_token },
+  }), env);
+  const rejectedReceipt = await rejected.json();
+  assert.equal(rejected.status, 201);
+  assert.deepEqual(rejectedReceipt.rejections, [{ occurrence_index: 0, reason: "url_too_long" }]);
+  assert.equal(rejectedReceipt.accepted_targets, 0);
 });
 
 test("the fixed reference route rewrites only the asset request", async () => {
@@ -180,19 +257,19 @@ test("each extraction observes the current rendered anchors instead of a source 
     anchor("./relative", "Relative"),
   ];
   const pageDocument = page(anchors);
-  const before = extractRenderedCandidates(pageDocument, "2026-09-01T06:30:00.000Z");
+  const before = extractRenderedPage(pageDocument, "2026-09-01T06:30:00.000Z");
   anchors.push(anchor("./delayed-evidence", "Delayed"));
-  const after = extractRenderedCandidates(pageDocument, "2026-09-01T06:30:01.000Z");
-  assert.equal(before.length, 2);
-  assert.equal(after.length, 3);
-  assert.equal(after[2].raw_href, "./delayed-evidence");
-  assert.equal(before[0].anchor_text, "First link");
-  assert.ok(after.every((item, index) => item.provenance.occurrence_index === index));
+  const after = extractRenderedPage(pageDocument, "2026-09-01T06:30:01.000Z");
+  assert.equal(before.candidates.length, 2);
+  assert.equal(after.candidates.length, 3);
+  assert.equal(after.candidates[2].raw_href, "./delayed-evidence");
+  assert.equal(before.candidates[0].anchor_text, "First link");
+  assert.ok(after.candidates.every((item, index) => item.provenance.occurrence_index === index));
   const many = Array.from({ length: WEBMCP_LIMITS.maxCandidates + 2 }, (_, i) =>
     anchor(`./${i}`, "x".repeat(WEBMCP_LIMITS.maxAnchorTextChars + 10)));
-  const bounded = extractRenderedCandidates(page(many));
-  assert.equal(bounded.length, WEBMCP_LIMITS.maxCandidates);
-  assert.equal(bounded[0].anchor_text.length, WEBMCP_LIMITS.maxAnchorTextChars);
+  const bounded = extractRenderedPage(page(many));
+  assert.equal(bounded.candidates.length, WEBMCP_LIMITS.maxCandidates);
+  assert.equal(bounded.candidates[0].anchor_text.length, WEBMCP_LIMITS.maxAnchorTextChars);
 });
 
 test("tool contract is literal, read-only, untrusted, cancellable, and invocation-time", async () => {
@@ -200,12 +277,24 @@ test("tool contract is literal, read-only, untrusted, cancellable, and invocatio
   const pageDocument = page(anchors);
   const posts = [];
   const fetcher = async (url, init) => {
-    if (url === "/api/session") return Response.json({ csrf_token: "csrf" });
-    posts.push({ init, body: JSON.parse(init.body) });
+    if (url === "/api/session") return sessionResponse();
+    const body = JSON.parse(init.body);
+    posts.push({ init, body });
+    const targets = body.candidates.map((item) => ({
+      canonical_url: new URL(item.raw_href, item.base_url).href,
+      occurrence_indices: [item.provenance.occurrence_index],
+      anchor_text_variants: [item.anchor_text],
+    }));
     return Response.json({
-      mode: "live_page", scan_ids: ["a".repeat(32)], observed_candidates: init.body.length,
-      accepted_targets: 1, rejected_candidates: 0, truncated: false,
-      page_evidence_trust: "untrusted", targets: [], rejections: [],
+      mode: "live_page",
+      scan_ids: targets.map((_, index) => String(index).padStart(32, "0")),
+      observed_candidates: body.candidates.length,
+      accepted_targets: targets.length,
+      rejected_candidates: 0,
+      truncated: false,
+      page_evidence_trust: "untrusted",
+      targets,
+      rejections: [],
     }, { status: 201 });
   };
   const tool = createInspectCurrentPageTool(pageDocument, fetcher);
@@ -220,7 +309,7 @@ test("tool contract is literal, read-only, untrusted, cancellable, and invocatio
   await tool.execute({});
   assert.equal(posts[0].body.candidates.length, 1);
   assert.equal(posts[1].body.candidates.length, 2);
-  assert.equal(posts[1].init.headers["x-watchdog-csrf"], "csrf");
+  assert.equal(posts[1].init.headers["x-watchdog-csrf"], "c".repeat(32));
   assert.equal(posts[1].init.signal, undefined);
   await assert.rejects(tool.execute({ target: "https://attacker.example" }), /invalid_arguments/);
   const aborted = new AbortController();
@@ -228,11 +317,52 @@ test("tool contract is literal, read-only, untrusted, cancellable, and invocatio
   await assert.rejects(tool.execute({}, { signal: aborted.signal }), { name: "AbortError" });
 });
 
-test("fetch and registration failures stay typed and status rendering is inert", async () => {
+test("in-flight cancellation reaches both session and scan fetch phases", async () => {
+  for (const blockedPhase of ["session", "scan"]) {
+    const controller = new AbortController();
+    const calls = [];
+    const fetcher = async (url, init) => {
+      calls.push({ url, signal: init.signal });
+      const phase = url === "/api/session" ? "session" : "scan";
+      if (phase !== blockedPhase) return phase === "session" ? sessionResponse() : receiptResponse();
+      return new Promise((_resolve, reject) => {
+        init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true });
+      });
+    };
+    const pending = inspectCurrentPage({ pageDocument: page([]), fetcher, signal: controller.signal });
+    await new Promise((resolve) => setImmediate(resolve));
+    controller.abort();
+    await assert.rejects(pending, { name: "AbortError" });
+    assert.equal(calls.at(-1).url, `/api/${blockedPhase === "session" ? "session" : "scans/live"}`);
+    assert.ok(calls.every(({ signal }) => signal === controller.signal));
+  }
+});
+
+test("malformed and transport failures use the closed browser error vocabulary", async () => {
   await assert.rejects(inspectCurrentPage({
     pageDocument: page([]),
     fetcher: async () => Response.json({ error: "unauthorized" }, { status: 401 }),
   }), /unauthorized/);
+  await assert.rejects(inspectCurrentPage({
+    pageDocument: page([]), fetcher: async () => { throw new TypeError("network down"); },
+  }), /service_unavailable/);
+  for (const malformedScan of [
+    new Response("not json", { status: 200 }),
+    Response.json({ oops: true }),
+    receiptResponse({ page_evidence_trust: "trusted" }),
+  ]) {
+    let calls = 0;
+    await assert.rejects(inspectCurrentPage({
+      pageDocument: page([]),
+      fetcher: async () => ++calls === 1 ? sessionResponse() : malformedScan,
+    }), /malformed_response/);
+  }
+  await assert.rejects(inspectCurrentPage({
+    pageDocument: page([]), fetcher: async () => Response.json({ csrf_token: "short" }),
+  }), /malformed_response/);
+});
+
+test("unsupported WebMCP status rendering is inert", async () => {
   const status = { value: "", set textContent(value) { this.value = value; },
     set innerHTML(_value) { assert.fail("status must remain inert"); } };
   const originalDocument = globalThis.document;
