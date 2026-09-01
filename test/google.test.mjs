@@ -302,3 +302,32 @@ test("Paste and Live inject the same normalized adapter only for accepted target
   }, { now: () => new Date(requestedAt), provider, store: async () => "e".repeat(32) });
   assert.equal(calls.length, beforeRejected);
 });
+
+test("provider work is concurrent and capped to the retained result budget", async () => {
+  let calls = 0;
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const provider = Object.freeze({
+    provider: "google_safe_browsing",
+    source: "live",
+    observe: async (providerRequest) => {
+      calls += 1;
+      await gate;
+      return liveObservation(providerRequest);
+    },
+  });
+  const html = Array.from({ length: 20 }, (_, index) =>
+    `<a href="https://target-${index}.example/">${index}</a>`).join("");
+  const pending = executePasteScan({ mode: "html", html, base_url: canonicalTarget }, {
+    now: () => new Date(requestedAt),
+    provider,
+    store: async () => "d".repeat(32),
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(calls, 16);
+  release();
+  const receipt = await pending;
+  assert.equal(receipt.accepted_targets, 20);
+  assert.equal(receipt.scan_ids.length, 16);
+  assert.equal(receipt.truncated, true);
+});

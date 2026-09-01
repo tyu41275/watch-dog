@@ -163,15 +163,15 @@ export async function executePasteScan(
   ];
   let onlyReason: UnscannableReason | null = targets.length === 0 && rejectionReasons.length === 1
     ? (rejectionReasons[0] ?? null) : null;
-  const results: ScanResult[] = [];
-  for (const target of targets) {
+  const retainedTargets = targets.slice(0, PASTE_LIMITS.max_results);
+  const results = await Promise.all(retainedTargets.map(async (target): Promise<ScanResult> => {
     const providerObservations = dependencies.provider === undefined ? undefined : [
       await dependencies.provider.observe({
         canonical_target: target.canonical_url,
         requested_at: analyzedAt,
       }),
     ];
-    results.push(aggregateAnalysis({
+    return aggregateAnalysis({
       scan_id: "pending",
       mode,
       analyzed_at: analyzedAt,
@@ -179,14 +179,14 @@ export async function executePasteScan(
       ...(providerObservations === undefined ? {} : {
         provider_observations: providerObservations,
       }),
-    }));
-  }
+    });
+  }));
   results.push(...rejectionReasons.map((reason) => unavailable(mode, reason, analyzedAt)));
   if (results.length === 0) {
     onlyReason = "no_candidates";
     results.push(unavailable(mode, onlyReason, analyzedAt));
   }
-  const truncated = results.length > PASTE_LIMITS.max_results;
+  const truncated = targets.length + rejectionReasons.length > PASTE_LIMITS.max_results;
   const retained = results.slice(0, PASTE_LIMITS.max_results);
   if (truncated) {
     for (const result of retained) result.limitations.push(

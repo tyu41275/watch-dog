@@ -169,15 +169,15 @@ export async function executeLiveScan(
         reason: "url_too_long" as const,
       }))),
   ].sort((left, right) => left.occurrence_index - right.occurrence_index);
-  const results: ScanResult[] = [];
-  for (const target of targets) {
+  const retainedTargets = targets.slice(0, LIVE_LIMITS.max_results);
+  const results = await Promise.all(retainedTargets.map(async (target): Promise<ScanResult> => {
     const providerObservations = dependencies.provider === undefined ? undefined : [
       await dependencies.provider.observe({
         canonical_target: target.canonical_url,
         requested_at: analyzedAt,
       }),
     ];
-    results.push(aggregateAnalysis({
+    return aggregateAnalysis({
       scan_id: "pending",
       mode: "live_page",
       analyzed_at: analyzedAt,
@@ -185,11 +185,11 @@ export async function executeLiveScan(
       ...(providerObservations === undefined ? {} : {
         provider_observations: providerObservations,
       }),
-    }));
-  }
+    });
+  }));
   results.push(...rejections.map(({ reason }) => unavailable(reason, analyzedAt)));
   if (results.length === 0) results.push(unavailable("no_candidates", analyzedAt));
-  const truncated = results.length > LIVE_LIMITS.max_results;
+  const truncated = targets.length + rejections.length > LIVE_LIMITS.max_results;
   const retained = results.slice(0, LIVE_LIMITS.max_results);
   if (truncated) {
     for (const result of retained) result.limitations.push(
