@@ -160,14 +160,17 @@ test("HTTP, network, timeout and invalid transport failures normalize without pa
   assert.deepEqual(await hanging.observe(request), expectedError("timeout"));
 
   let bodyCancelled = false;
+  const hangingStream = new ReadableStream({
+    cancel() { bodyCancelled = true; return new Promise(() => undefined); },
+  });
   const hangingBody = new GoogleSafeBrowsingAdapter("key", {
     timeout_ms: 1,
-    fetcher: async () => new Response(new ReadableStream({
-      cancel() { bodyCancelled = true; },
-    }), { headers: { "content-type": "application/json" } }),
+    fetcher: async () => new Response(hangingStream,
+      { headers: { "content-type": "application/json" } }),
   });
   assert.deepEqual(await hangingBody.observe(request), expectedError("timeout"));
   assert.equal(bodyCancelled, true);
+  assert.equal(hangingStream.locked, false);
 });
 
 test("response parsing fails closed on malformed, oversized and open provider shapes",

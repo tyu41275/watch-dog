@@ -113,7 +113,7 @@ async function boundedJson(response: Response, signal: AbortSignal): Promise<unk
     }
   } finally {
     if (abort !== undefined) signal.removeEventListener("abort", abort);
-    if (!signal.aborted) reader.releaseLock();
+    reader.releaseLock();
   }
   const bytes = new Uint8Array(length);
   let offset = 0;
