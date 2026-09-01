@@ -166,7 +166,7 @@ function threatUrlMatches(value: unknown, canonicalTarget: string): boolean {
     }
     const paths = new Set([target.pathname + target.search, target.pathname, "/"]);
     let slash = 0;
-    for (let count = 1; count <= 4; count += 1) {
+    for (let count = 1; count < 4; count += 1) {
       slash = target.pathname.indexOf("/", slash + 1);
       if (slash < 0) break;
       paths.add(target.pathname.slice(0, slash + 1));

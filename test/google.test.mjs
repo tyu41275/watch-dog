@@ -126,7 +126,7 @@ test("recognized threats map to closed categories with Google-only attribution a
   }));
   assert.equal(priority.category, "malware");
   const expressions = [
-    ["https://a.b.c.d.e.f.com/one/two/three/four/five", "https://f.com/one/two/three/four/", "match"],
+    ["https://a.b.c.d.e.f.com/one/two/three/four/five", "https://f.com/one/two/three/", "match"], ["https://a.b.c.d.e.f.com/one/two/three/four/five", "https://f.com/one/two/three/four/", "error"],
     ["https://a.b.c.d.e.f.com/path", "https://b.c.d.e.f.com/", "error"], ["https://a.b.c.d.e.f.com/path", "https://com/", "error"],
     ["https://a.b.example.co.uk/path", "https://example.co.uk/", "match"], ["https://a.b.example.co.uk/path", "https://co.uk/", "error"],
     ["https://[::ffff:8.8.8.8]/path", "https://8.8.8.8/", "match"], ["https://[64:ff9b::8.8.8.8]/path", "https://8.8.8.8/", "match"],
