@@ -1,3 +1,5 @@
+import { getDomain } from "tldts";
+
 import type { ProviderObservation } from "../../shared/contracts.js";
 import {
   PROVIDER_ADAPTER_LIMITS,
@@ -124,25 +126,53 @@ async function boundedJson(response: Response, signal: AbortSignal): Promise<unk
   return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
 }
 
+function expressionUrl(value: string): URL {
+  let decoded = (value.split("#", 1)[0] ?? "").replace(/[\t\r\n]/gu, "");
+  while (/%[\da-f]{2}/iu.test(decoded)) decoded = decoded.replace(
+    /%([\da-f]{2})/giu, (_match, octet: string) => String.fromCharCode(Number.parseInt(octet, 16)),
+  );
+  decoded = decoded.replace(/[^\x21-\x7e]|[#%]/gu, (character) =>
+    `%${character.charCodeAt(0).toString(16).padStart(2, "0").toUpperCase()}`);
+  const url = new URL(decoded);
+  url.hash = "";
+  url.pathname = url.pathname.replace(/\/{2,}/gu, "/");
+  return url;
+}
+
+function expressionHost(hostname: string): string {
+  hostname = hostname.replace(/^\.+|\.+$/gu, "").replace(/\.{2,}/gu, ".").toLowerCase();
+  const mapped = /^\[(?:::ffff:|64:ff9b::)([\da-f]{1,4}):([\da-f]{1,4})\]$/iu.exec(hostname);
+  if (mapped === null) return hostname;
+  const high = Number.parseInt(mapped[1] ?? "", 16);
+  const low = Number.parseInt(mapped[2] ?? "", 16);
+  return [high >> 8, high & 255, low >> 8, low & 255].join(".");
+}
+
 function threatUrlMatches(value: unknown, canonicalTarget: string): boolean {
   if (typeof value !== "string" || value.length === 0 || value.length >
     PROVIDER_ADAPTER_LIMITS.max_target_chars) return false;
   try {
-    const url = new URL(value);
-    const target = new URL(canonicalTarget);
-    const hostMatches = url.hostname === target.hostname ||
-      (!/^\d{1,3}(?:\.\d{1,3}){3}$/u.test(target.hostname) &&
-        !target.hostname.includes(":") && target.hostname.endsWith(`.${url.hostname}`));
+    const url = expressionUrl(value);
+    const target = expressionUrl(canonicalTarget);
+    const targetHost = expressionHost(target.hostname);
+    const hosts = new Set([targetHost]);
+    const registrable = getDomain(targetHost, { allowPrivateDomains: true });
+    if (registrable !== null) {
+      const labels = targetHost.split(".");
+      const start = labels.length - registrable.split(".").length;
+      for (let index = start; index >= Math.max(0, start - 3); index -= 1) {
+        hosts.add(labels.slice(index).join("."));
+      }
+    }
     const paths = new Set([target.pathname + target.search, target.pathname, "/"]);
     let slash = 0;
-    for (let count = 1; count < 4; count += 1) {
+    for (let count = 1; count <= 4; count += 1) {
       slash = target.pathname.indexOf("/", slash + 1);
       if (slash < 0) break;
       paths.add(target.pathname.slice(0, slash + 1));
     }
-    return (url.protocol === "http:" || url.protocol === "https:") &&
-      url.username === "" && url.password === "" && url.port === "" &&
-      url.hash === "" && hostMatches && paths.has(url.pathname + url.search);
+    return url.hostname !== "" && hosts.has(expressionHost(url.hostname)) &&
+      paths.has(url.pathname + url.search);
   } catch {
     return false;
   }
@@ -221,7 +251,13 @@ export class GoogleSafeBrowsingAdapter implements ProviderAdapter {
     const endpoint = new URL(GOOGLE_SAFE_BROWSING.endpoint);
     endpoint.searchParams.append("urls", request.canonical_target);
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    let expire!: (reason: DOMException) => void;
+    const expired = new Promise<never>((_resolve, reject) => { expire = reject; });
+    const timeout = setTimeout(() => {
+      const reason = new DOMException("provider request timed out", "AbortError");
+      controller.abort(reason);
+      expire(reason);
+    }, this.timeoutMs);
     try {
       let response: Response;
       try {
@@ -233,10 +269,7 @@ export class GoogleSafeBrowsingAdapter implements ProviderAdapter {
         void transport.then((late) => {
           if (controller.signal.aborted && late instanceof Response) discardBody(late);
         }, () => undefined);
-        response = await Promise.race([transport, new Promise<never>((_resolve, reject) => {
-          controller.signal.addEventListener("abort", () => reject(controller.signal.reason),
-            { once: true });
-        })]);
+        response = await Promise.race([transport, expired]);
       } catch (error) {
         return providerErrorObservation(request, this.source,
           controller.signal.aborted || (error instanceof DOMException && error.name === "AbortError")

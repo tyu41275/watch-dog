@@ -58,10 +58,15 @@ test("missing configuration is live-source not_configured without attempting a r
 test("v5 lookup sends one raw canonical URL and keeps the API key out of the URL and result", async () => {
   const secret = "secret-that-must-not-escape";
   const seen = [];
+  let listenerBalance = 0;
   const adapter = new GoogleSafeBrowsingAdapter(secret, {
     fetcher: async (input, init) => {
       const url = new URL(input);
       const headers = new Headers(init.headers);
+      const add = init.signal.addEventListener.bind(init.signal);
+      const remove = init.signal.removeEventListener.bind(init.signal);
+      init.signal.addEventListener = (...args) => { listenerBalance += 1; return add(...args); };
+      init.signal.removeEventListener = (...args) => { listenerBalance -= 1; return remove(...args); };
       seen.push({ url, headers, init });
       return json({ cacheDuration: "60.25s" });
     },
@@ -90,6 +95,7 @@ test("v5 lookup sends one raw canonical URL and keeps the API key out of the URL
     error: null,
   });
   assert.equal(JSON.stringify(observation).includes(secret), false);
+  assert.equal(listenerBalance, 0);
   assert.doesNotMatch(JSON.stringify(observation), /\b(is safe|safe to|clean|harmless)\b/i);
 });
 
@@ -119,11 +125,23 @@ test("recognized threats map to closed categories with Google-only attribution a
     cacheDuration: "1s",
   }));
   assert.equal(priority.category, "malware");
-  const expression = await observeResponse(json({
-    threats: [{ url: "http://example.test/", threatTypes: ["MALWARE"] }],
-    cacheDuration: "1s",
-  }));
-  assert.equal(expression.category, "malware");
+  const expressions = [
+    ["https://a.b.c.d.e.f.com/one/two/three/four/five", "https://f.com/one/two/three/four/", "match"],
+    ["https://a.b.c.d.e.f.com/path", "https://b.c.d.e.f.com/", "error"], ["https://a.b.c.d.e.f.com/path", "https://com/", "error"],
+    ["https://a.b.example.co.uk/path", "https://example.co.uk/", "match"], ["https://a.b.example.co.uk/path", "https://co.uk/", "error"],
+    ["https://[::ffff:8.8.8.8]/path", "https://8.8.8.8/", "match"], ["https://[64:ff9b::8.8.8.8]/path", "https://8.8.8.8/", "match"],
+    ["https://a.example.test/path", "ftp://user:pass@example.test:9999/#fragment", "match"],
+    ["https://a.example.test/path", "https://example.test/other/", "error"],
+    ["https://a.example.test/a//b/%257E?q=one", "https://example.test/a/b/", "match"],
+    ["https://a.example.test/path?q=one", "https://example.test/path?q=two", "error"],
+  ];
+  for (const [target, expressionUrl, state] of expressions) {
+    const adapter = new GoogleSafeBrowsingAdapter("key", { fetcher: async () => json({
+      threats: [{ url: expressionUrl, threatTypes: ["MALWARE"] }], cacheDuration: "1s",
+    }) });
+    assert.equal((await adapter.observe({ canonical_target: new URL(target).href,
+      requested_at: requestedAt })).state, state, `${target} -> ${expressionUrl}`);
+  }
 });
 
 test("HTTP, network, timeout and invalid transport failures normalize without payload leakage", async () => {
@@ -198,10 +216,6 @@ test("response parsing fails closed on malformed, oversized and open provider sh
     json({ threats: [], cacheDuration: "1s", rawPayload: "secret" }),
     json({ threats: [{ ...validThreat, rawPayload: "secret" }], cacheDuration: "1s" }),
     json({ threats: [{ url: "not a URL", threatTypes: ["MALWARE"] }], cacheDuration: "1s" }),
-    json({ threats: [{ url: "https://different.test/", threatTypes: ["MALWARE"] }],
-      cacheDuration: "1s" }),
-    json({ threats: [{ url: "https://example.test/other/", threatTypes: ["MALWARE"] }],
-      cacheDuration: "1s" }),
     json({ threats: [{ url: canonicalTarget, threatTypes: [] }], cacheDuration: "1s" }),
     json({ threats: [{ url: canonicalTarget, threatTypes: ["UNKNOWN"] }], cacheDuration: "1s" }),
     ...["toString", "constructor", "__proto__"].map((type) =>
@@ -343,30 +357,41 @@ test("Paste and Live inject the same normalized adapter only for accepted target
 });
 
 test("provider work is concurrent and capped to the retained result budget", async () => {
-  let calls = 0;
-  let release;
-  const gate = new Promise((resolve) => { release = resolve; });
-  const provider = Object.freeze({
-    provider: "google_safe_browsing",
-    source: "live",
-    observe: async (providerRequest) => {
-      calls += 1;
-      await gate;
-      return liveObservation(providerRequest);
-    },
-  });
-  const html = Array.from({ length: 20 }, (_, index) =>
-    `<a href="https://target-${index}.example/">${index}</a>`).join("");
-  const pending = executePasteScan({ mode: "html", html, base_url: canonicalTarget }, {
-    now: () => new Date(requestedAt),
-    provider,
-    store: async () => "d".repeat(32),
-  });
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(calls, 16);
-  release();
-  const receipt = await pending;
-  assert.equal(receipt.accepted_targets, 20);
-  assert.equal(receipt.scan_ids.length, 16);
-  assert.equal(receipt.truncated, true);
+  for (const mode of ["paste", "live"]) {
+    let active = 0;
+    let maximum = 0;
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const calls = [];
+    const stored = [];
+    const provider = Object.freeze({ provider: "google_safe_browsing", source: "live",
+      observe: async (providerRequest) => {
+        calls.push(providerRequest.canonical_target);
+        active += 1;
+        maximum = Math.max(maximum, active);
+        await gate;
+        active -= 1;
+        return liveObservation(providerRequest);
+      } });
+    const urls = Array.from({ length: 20 }, (_, index) => `https://target-${index}.example/`);
+    const dependencies = { now: () => new Date(requestedAt), provider,
+      store: async (result) => { stored.push(result.canonical_target); return "d".repeat(32); } };
+    const pending = mode === "paste"
+      ? executePasteScan({ mode: "html", html: urls.map((url) => `<a href="${url}">x</a>`).join(""),
+        base_url: canonicalTarget }, dependencies)
+      : executeLiveScan({ document_url: canonicalTarget, observed_at: requestedAt,
+        candidates: urls.map((url, occurrence_index) => ({ raw_href: url, anchor_text: "x",
+          base_url: canonicalTarget, provenance: { source: "live_page",
+            document_url: canonicalTarget, occurrence_index, extracted_at: requestedAt } })),
+        extraction_rejections: [] }, dependencies);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(calls.length, 16, mode);
+    assert.equal(maximum, 16, mode);
+    release();
+    const receipt = await pending;
+    assert.equal(receipt.accepted_targets, 20, mode);
+    assert.equal(receipt.scan_ids.length, 16, mode);
+    assert.equal(receipt.truncated, true, mode);
+    assert.deepEqual(stored, calls, mode);
+  }
 });

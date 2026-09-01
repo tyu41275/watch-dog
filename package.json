@@ -16,6 +16,7 @@
     "node": ">=22"
   },
   "dependencies": {
-    "parse5": "8.0.1"
+    "parse5": "8.0.1",
+    "tldts": "7.4.11"
   }
 }
