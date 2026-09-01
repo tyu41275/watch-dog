@@ -92,9 +92,9 @@ function receiptResponse(overrides = {}) {
   }, { status: 201 });
 }
 
-function resultResponse(scanId = "a".repeat(32)) {
+function resultResponse(scanId = "a".repeat(32), target = "https://watch.example/one") {
   return Response.json({ status: "ok", result: { kind: "analyzed", scan_id: scanId,
-    mode: "live_page", canonical_target: "https://watch.example/one", unscannable_reason: null,
+    mode: "live_page", canonical_target: target, unscannable_reason: null,
     outcome: "unknown", risk_label: "unknown", analysis_state: "unknown", confidence: "low",
     supporting_evidence: [], contradicting_evidence: [], provider_observations: [],
     limitation_codes: ["no_provider_observation", "confidence_basis"] } });
@@ -303,10 +303,10 @@ test("each extraction observes the current rendered anchors instead of a source 
 test("tool contract is literal, read-only, untrusted, cancellable, and invocation-time", async () => {
   const anchors = [anchor("./before", "Before")];
   const pageDocument = page(anchors);
-  const posts = [];
+  const posts = []; const resultTargets = new Map();
   const fetcher = async (url, init) => {
     if (url === "/api/session") return sessionResponse();
-    if (url.startsWith("/api/results/")) return resultResponse(url.slice(-32));
+    if (url.startsWith("/api/results/")) return resultResponse(url.slice(-32), resultTargets.get(url.slice(-32)));
     const body = JSON.parse(init.body);
     posts.push({ init, body });
     const targets = body.candidates.map((item) => ({
@@ -314,9 +314,10 @@ test("tool contract is literal, read-only, untrusted, cancellable, and invocatio
       occurrence_indices: [item.provenance.occurrence_index],
       anchor_text_variants: [item.anchor_text],
     }));
+    const scanIds = targets.map((target, index) => { const id = String(index).padStart(32, "0"); resultTargets.set(id, target.canonical_url); return id; });
     return Response.json({
       mode: "live_page",
-      scan_ids: targets.map((_, index) => String(index).padStart(32, "0")),
+      scan_ids: scanIds,
       observed_candidates: body.candidates.length,
       accepted_targets: targets.length,
       rejected_candidates: 0,

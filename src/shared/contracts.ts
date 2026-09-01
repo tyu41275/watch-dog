@@ -151,6 +151,10 @@ function nullableString(value: unknown, path: string): string | null {
   return value === null ? null : string(value, path);
 }
 
+function timestamp(value: string): boolean { return Number.isFinite(Date.parse(value)); }
+function webUrl(value: string, canonical = false): boolean { if (value.length > 2_048) return false; try { const url = new URL(value); return (url.protocol === "http:" || url.protocol === "https:") &&
+  url.username === "" && url.password === "" && url.port === "" && (!canonical || url.hash === "" && url.href === value); } catch { return false; } }
+
 function integer(value: unknown, path: string): number {
   if (!Number.isSafeInteger(value) || (value as number) < 0) {
     throw new TypeError(`${path} must be a non-negative integer`);
@@ -207,15 +211,13 @@ export function parseProviderObservation(value: unknown): ProviderObservation {
       ? null
       : literal(data.error, PROVIDER_ERROR_CODES, `${path}.error`),
   };
-  const categoryOk = result.state === "match" ? ["malware", "social_engineering",
-    "unwanted_software", "potentially_harmful_application"].includes(result.category ?? "") :
-    result.category === null;
+  const categoryOk = result.state === "match" ? ["malware", "social_engineering", "unwanted_software", "potentially_harmful_application"].includes(result.category ?? "") : result.category === null;
   const errorOk = result.state === "error" ? result.error !== null && result.error !== "not_configured" :
     result.state === "not_configured" ? result.error === "not_configured" : result.error === null;
-  if (!categoryOk || !errorOk || (result.source === "live" && result.state === "match" &&
-    result.reference !== "https://transparencyreport.google.com/safe-browsing/search")) {
+  if (!categoryOk || !errorOk || !webUrl(result.queried_target, true) || !timestamp(result.observed_at) || (result.reference !== null && result.reference.length > 2_048) ||
+    (!(result.state === "match" || result.state === "no_match") && (result.expires_at !== null || result.freshness !== "unknown" || result.confidence !== "low" || result.reference !== null) ||
+    (result.source === "live" && (result.state === "match" ? result.reference !== "https://transparencyreport.google.com/safe-browsing/search" : result.state === "no_match" && result.reference !== null))))
     throw new TypeError(`${path} has an impossible state relation`);
-  }
   return result;
 }
 
@@ -242,6 +244,11 @@ export function outcomeFor(risk: RiskLabel, state: AnalysisState, confidence: Co
   return found as OutcomeCode;
 }
 
+function reasonMatchesMode(mode: ScanMode, reason: string | null): boolean { const basic = ["empty_input", "invalid_url", "unsupported_scheme", "credentials_not_allowed", "disallowed_port"];
+  if (mode === "live_page") return reason !== null && [...basic, "url_too_long", "no_candidates"].includes(reason);
+  if (mode === "paste_html") return reason !== null && [...basic, "url_too_long", "input_too_large", "no_candidates"].includes(reason);
+  return reason !== null && UNSCANNABLE_REASONS.includes(reason as (typeof UNSCANNABLE_REASONS)[number]) && reason !== "input_too_large"; }
+
 export function parseScanResult(value: unknown): ScanResult {
   const path = "scan_result";
   const data = record(value, path);
@@ -267,20 +274,47 @@ export function parseScanResult(value: unknown): ScanResult {
     limitation_codes: array(data.limitation_codes, `${path}.limitation_codes`, (item, itemPath) =>
       literal(item, LIMITATION_CODES, itemPath)),
   };
-  if (result.outcome !== outcomeFor(result.risk_label, result.analysis_state, result.confidence) ||
-    (result.kind === "unscannable") !== (result.canonical_target === null &&
-      result.unscannable_reason !== null && result.analysis_state === "unscannable") ||
-    (result.kind === "analyzed" && result.unscannable_reason !== null) ||
-    new Set(result.limitation_codes).size !== result.limitation_codes.length) {
-    throw new TypeError(`${path} has an impossible variant`);
+  if (result.outcome !== outcomeFor(result.risk_label, result.analysis_state, result.confidence) || (result.kind === "unscannable") !== (result.canonical_target === null &&
+    result.unscannable_reason !== null && result.analysis_state === "unscannable") || result.kind === "analyzed" && (result.unscannable_reason !== null ||
+    result.canonical_target === null || !webUrl(result.canonical_target, true)) || result.kind === "unscannable" && !reasonMatchesMode(result.mode, result.unscannable_reason) ||
+    new Set(result.limitation_codes).size !== result.limitation_codes.length) throw new TypeError(`${path} has an impossible variant`);
+  const observations = result.provider_observations; const impossible = (relation: string): never => { throw new TypeError(`${path} has an impossible ${relation} relation`); };
+  if (new Set(observations.map((item) => JSON.stringify(item))).size !== observations.length || observations.some((item) => { const resolved = item.state === "match" || item.state === "no_match";
+    const expiryOk = item.expires_at === null ? item.freshness === "unknown" && item.confidence === "low" : timestamp(item.expires_at) &&
+      Date.parse(item.expires_at) >= Date.parse(item.observed_at) && ["fresh", "stale"].includes(item.freshness) && item.confidence === (item.freshness === "fresh" ? "medium" : "low");
+    return item.queried_target !== result.canonical_target || resolved && !expiryOk; })) impossible("observation");
+  const tagged = [...result.supporting_evidence.map((item) => ["supporting", item] as const), ...result.contradicting_evidence.map((item) => ["contradicting", item] as const)];
+  if (result.kind === "unscannable") { if (observations.length || tagged.length || result.limitation_codes.join() !== "confidence_basis") impossible("unscannable"); return result; }
+  const providerLinks: string[] = []; let candidateCount = 0;
+  for (const [polarity, item] of tagged) {
+    if (item.target !== result.canonical_target || !timestamp(item.observed_at)) impossible("evidence");
+    if (item.source.startsWith("candidate:")) { if (polarity !== "supporting" || item.source !== `candidate:${result.mode}` ||
+        item.category !== "misleading_url_like_text" || item.freshness !== "fresh" ||
+        item.provider_observation_index !== null || item.reference === null || !webUrl(item.reference)) impossible("evidence");
+      candidateCount += 1; continue; }
+    const index = item.provider_observation_index; const observation = index === null ? undefined : observations[index];
+    const expectedPolarity = result.risk_label === "no_known_match" && observation?.state === "no_match" ?
+      "supporting" : observation?.state === "match" && result.risk_label !== "no_known_match" ? "supporting" : "contradicting";
+    if (observation === undefined || (observation.state !== "match" && observation.state !== "no_match") || polarity !== expectedPolarity ||
+      item.source !== `${observation.source}:${observation.provider}` || item.category !== (observation.state === "match" ? observation.category : "no_known_match") ||
+      item.observed_at !== observation.observed_at || item.freshness !== observation.freshness || item.reference !== observation.reference) impossible("evidence");
+    providerLinks.push(`${polarity}:${index}`);
   }
-  const evidence = [...result.supporting_evidence, ...result.contradicting_evidence];
-  if (result.kind === "unscannable" && (evidence.length || result.provider_observations.length) ||
-    evidence.some((item) => item.target !== result.canonical_target ||
-      (item.source.startsWith("candidate:") ? item.provider_observation_index !== null ||
-        item.source !== `candidate:${result.mode}` : item.provider_observation_index === null ||
-        item.provider_observation_index >= result.provider_observations.length))) {
-    throw new TypeError(`${path} has an impossible evidence relation`);
-  }
+  const currentMatch = observations.some((item) => item.state === "match" && item.freshness === "fresh"), currentNoMatch = observations.some((item) => item.state === "no_match" && item.freshness === "fresh");
+  const stale = observations.some((item) => (item.state === "match" || item.state === "no_match") && item.freshness !== "fresh"), errors = observations.some((item) => item.state === "error" || item.state === "not_configured");
+  const risk: RiskLabel = currentMatch ? "known_malicious" : candidateCount ? "suspicious" : currentNoMatch ? "no_known_match" : "unknown", state: AnalysisState = currentMatch && currentNoMatch ?
+    "conflicting" : currentMatch || currentNoMatch ? "complete" : stale ? "stale" : errors ? "provider_error" : "unknown";
+  const contradiction = risk === "no_known_match" ? observations.some((item) => item.state === "match") : observations.some((item) => item.state === "no_match");
+  const confidence: Confidence = state !== "conflicting" && !errors && !contradiction && risk === "known_malicious" ? (candidateCount ? "high" : "medium") :
+    state !== "conflicting" && !errors && !contradiction && risk === "no_known_match" ? "medium" : "low";
+  const expectedLinks = observations.flatMap((item, index) => item.state === "match" || item.state === "no_match" ? [`${risk === "no_known_match" && item.state === "no_match" ||
+    risk !== "no_known_match" && item.state === "match" ? "supporting" : "contradicting"}:${index}`] : []);
+  const expectedLimits = [candidateCount && "misleading_display_text", currentNoMatch && "provider_no_match_scope", currentMatch && "provider_match_scope",
+    stale && "stale_observation", errors && "provider_unavailable", !observations.length && result.kind === "analyzed" && "no_provider_observation",
+    state === "conflicting" && "conflicting_observations", "confidence_basis"].filter(Boolean) as LimitationCode[];
+  if (result.risk_label !== risk || result.analysis_state !== state || result.confidence !== confidence || result.outcome !== outcomeFor(risk, state, confidence) ||
+    providerLinks.sort().join() !== expectedLinks.sort().join() || new Set(tagged.map(([, item]) => JSON.stringify(item))).size !== tagged.length ||
+    expectedLimits.some((item) => !result.limitation_codes.includes(item)) || result.limitation_codes.some((item) => item !== "results_truncated" && !expectedLimits.includes(item)))
+    impossible("result");
   return result;
 }

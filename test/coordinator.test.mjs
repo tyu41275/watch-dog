@@ -124,6 +124,9 @@ test("actual coordination object persists only hashed throttle records", async (
   }));
   assert.equal(stored.status, 201);
   const { scan_id } = await stored.json();
+  const impossible = await object.fetch(new Request("https://coordinator/results", { method: "POST", body: JSON.stringify({ session_id: "s".repeat(32),
+    result: { ...result, outcome: "known_malicious_medium", risk_label: "known_malicious", analysis_state: "complete", confidence: "medium", limitation_codes: ["confidence_basis"] } }) }));
+  assert.equal(impossible.status, 400, "impossible result algebra must not reach storage");
   const unauthorized = await object.fetch(new Request(`https://coordinator/results/${scan_id}`, {
     headers: { "x-watchdog-session": "t".repeat(32) },
   }));
