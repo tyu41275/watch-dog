@@ -55,11 +55,10 @@ Use Node.js 22 or newer:
 npm ci
 npm run typecheck
 npm test
-npm run test:browser
 npx wrangler@4.127.1 deploy --dry-run
 ```
 
-The browser command runs the real local Worker and Durable Object seams over self-signed HTTPS. See the [browser verification guide](docs/browser-verification.md) for Chrome-channel, artifact, deployment-smoke, and recording boundaries.
+The remaining real-browser, exact-deployment, and submission evidence is tracked explicitly in the P0 dependency graph; local fixtures are not represented as that proof.
 
 The project is licensed under the [Apache License 2.0](LICENSE).
 
@@ -69,7 +68,6 @@ The project is licensed under the [Apache License 2.0](LICENSE).
 - [Architecture decision](docs/adr/0001-mvp-boundary.md)
 - [Threat model](docs/threat-model.md)
 - [Google Safe Browsing integration](docs/google-safe-browsing.md)
-- [Browser verification](docs/browser-verification.md)
 - [Acceptance criteria](docs/acceptance-criteria.md)
 - [Glossary](docs/glossary.md)
 - [Documentation index](docs/README.md)
