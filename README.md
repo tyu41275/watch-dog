@@ -35,8 +35,13 @@ Watch Dog does not claim access to unrelated browser tabs. Arbitrary active-tab 
 - Scans are ephemeral. Any future persistence requires explicit human confirmation and a sanitized, quarantined record.
 - Community volume alone cannot establish that a target is malicious.
 - External URL disclosure requires clear provider identification and consent.
+- Google Safe Browsing lookups send the canonical address-bar URL to Google from
+  the server. They are enabled only with a server secret and are restricted to
+  non-commercial use; a no-match is never a safety guarantee.
 
 See the [threat model](docs/threat-model.md) for the complete security boundary.
+Provider-specific terms, attribution, privacy, and failure semantics are in the
+[Google Safe Browsing integration note](docs/google-safe-browsing.md).
 
 ## Project status
 
@@ -49,6 +54,7 @@ The project is licensed under the [Apache License 2.0](LICENSE).
 - [Product vision](docs/vision-brief.md)
 - [Architecture decision](docs/adr/0001-mvp-boundary.md)
 - [Threat model](docs/threat-model.md)
+- [Google Safe Browsing integration](docs/google-safe-browsing.md)
 - [Acceptance criteria](docs/acceptance-criteria.md)
 - [Glossary](docs/glossary.md)
 - [Documentation index](docs/README.md)

@@ -15,6 +15,7 @@ import {
   type SafeFetchEvidence,
   type SafeFetchSeams,
 } from "./safe-fetch.js";
+import type { ProviderAdapter } from "../providers/types.js";
 
 export const PASTE_LIMITS = {
   max_request_bytes: 205_000,
@@ -37,6 +38,7 @@ export interface PasteReceipt {
 
 export interface PasteDependencies {
   store(result: ScanResult): Promise<string>;
+  provider?: ProviderAdapter;
   fetch_seams?: SafeFetchSeams;
   now?: () => Date;
 }
@@ -161,18 +163,30 @@ export async function executePasteScan(
   ];
   let onlyReason: UnscannableReason | null = targets.length === 0 && rejectionReasons.length === 1
     ? (rejectionReasons[0] ?? null) : null;
-  const results: ScanResult[] = targets.map((target) => aggregateAnalysis({
-    scan_id: "pending",
-    mode,
-    analyzed_at: analyzedAt,
-    target,
+  const retainedTargets = targets.slice(0, PASTE_LIMITS.max_results);
+  const results = await Promise.all(retainedTargets.map(async (target): Promise<ScanResult> => {
+    const providerObservations = dependencies.provider === undefined ? undefined : [
+      await dependencies.provider.observe({
+        canonical_target: target.canonical_url,
+        requested_at: analyzedAt,
+      }),
+    ];
+    return aggregateAnalysis({
+      scan_id: "pending",
+      mode,
+      analyzed_at: analyzedAt,
+      target,
+      ...(providerObservations === undefined ? {} : {
+        provider_observations: providerObservations,
+      }),
+    });
   }));
   results.push(...rejectionReasons.map((reason) => unavailable(mode, reason, analyzedAt)));
   if (results.length === 0) {
     onlyReason = "no_candidates";
     results.push(unavailable(mode, onlyReason, analyzedAt));
   }
-  const truncated = results.length > PASTE_LIMITS.max_results;
+  const truncated = targets.length + rejectionReasons.length > PASTE_LIMITS.max_results;
   const retained = results.slice(0, PASTE_LIMITS.max_results);
   if (truncated) {
     for (const result of retained) result.limitations.push(
