@@ -9,7 +9,7 @@ import {
   GoogleSafeBrowsingAdapter,
 } from "../dist/worker/providers/google.js";
 
-const canonicalTarget = "https://example.test/path?q=one&q=two";
+const canonicalTarget = "https://a.example.test/path?q=one&q=two";
 const requestedAt = "2026-09-01T08:30:00.000Z";
 const request = { canonical_target: canonicalTarget, requested_at: requestedAt };
 
@@ -119,6 +119,11 @@ test("recognized threats map to closed categories with Google-only attribution a
     cacheDuration: "1s",
   }));
   assert.equal(priority.category, "malware");
+  const expression = await observeResponse(json({
+    threats: [{ url: "http://example.test/", threatTypes: ["MALWARE"] }],
+    cacheDuration: "1s",
+  }));
+  assert.equal(expression.category, "malware");
 });
 
 test("HTTP, network, timeout and invalid transport failures normalize without payload leakage", async () => {
@@ -153,11 +158,17 @@ test("HTTP, network, timeout and invalid transport failures normalize without pa
   assert.deepEqual(brokenBody, expectedError("unavailable"));
   const hanging = new GoogleSafeBrowsingAdapter("key", {
     timeout_ms: 1,
-    fetcher: async (_input, init) => new Promise((_resolve, reject) => {
-      init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true });
-    }),
+    fetcher: async () => new Promise(() => undefined),
   });
   assert.deepEqual(await hanging.observe(request), expectedError("timeout"));
+  const lateQuota = new GoogleSafeBrowsingAdapter("key", {
+    timeout_ms: 1,
+    fetcher: async () => new Promise((resolve) =>
+      setTimeout(() => resolve(pending({ status: 429 })), 10)),
+  });
+  assert.deepEqual(await lateQuota.observe(request), expectedError("timeout"));
+  await new Promise((resolve) => setTimeout(resolve, 15));
+  assert.equal(cancellations, 6);
 
   let bodyCancelled = false;
   const hangingStream = new ReadableStream({
@@ -188,6 +199,8 @@ test("response parsing fails closed on malformed, oversized and open provider sh
     json({ threats: [{ ...validThreat, rawPayload: "secret" }], cacheDuration: "1s" }),
     json({ threats: [{ url: "not a URL", threatTypes: ["MALWARE"] }], cacheDuration: "1s" }),
     json({ threats: [{ url: "https://different.test/", threatTypes: ["MALWARE"] }],
+      cacheDuration: "1s" }),
+    json({ threats: [{ url: "https://example.test/other/", threatTypes: ["MALWARE"] }],
       cacheDuration: "1s" }),
     json({ threats: [{ url: canonicalTarget, threatTypes: [] }], cacheDuration: "1s" }),
     json({ threats: [{ url: canonicalTarget, threatTypes: ["UNKNOWN"] }], cacheDuration: "1s" }),

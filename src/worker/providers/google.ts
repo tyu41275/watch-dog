@@ -129,8 +129,20 @@ function threatUrlMatches(value: unknown, canonicalTarget: string): boolean {
     PROVIDER_ADAPTER_LIMITS.max_target_chars) return false;
   try {
     const url = new URL(value);
+    const target = new URL(canonicalTarget);
+    const hostMatches = url.hostname === target.hostname ||
+      (!/^\d{1,3}(?:\.\d{1,3}){3}$/u.test(target.hostname) &&
+        !target.hostname.includes(":") && target.hostname.endsWith(`.${url.hostname}`));
+    const paths = new Set([target.pathname + target.search, target.pathname, "/"]);
+    let slash = 0;
+    for (let count = 1; count < 4; count += 1) {
+      slash = target.pathname.indexOf("/", slash + 1);
+      if (slash < 0) break;
+      paths.add(target.pathname.slice(0, slash + 1));
+    }
     return (url.protocol === "http:" || url.protocol === "https:") &&
-      url.username === "" && url.password === "" && url.href === canonicalTarget;
+      url.username === "" && url.password === "" && url.port === "" &&
+      url.hash === "" && hostMatches && paths.has(url.pathname + url.search);
   } catch {
     return false;
   }
@@ -213,11 +225,18 @@ export class GoogleSafeBrowsingAdapter implements ProviderAdapter {
     try {
       let response: Response;
       try {
-        response = await this.fetcher(endpoint, {
+        const transport = this.fetcher(endpoint, {
           method: "GET",
           headers: { accept: "application/json", "x-goog-api-key": this.apiKey },
           signal: controller.signal,
         });
+        void transport.then((late) => {
+          if (controller.signal.aborted && late instanceof Response) discardBody(late);
+        }, () => undefined);
+        response = await Promise.race([transport, new Promise<never>((_resolve, reject) => {
+          controller.signal.addEventListener("abort", () => reject(controller.signal.reason),
+            { once: true });
+        })]);
       } catch (error) {
         return providerErrorObservation(request, this.source,
           controller.signal.aborted || (error instanceof DOMException && error.name === "AbortError")
