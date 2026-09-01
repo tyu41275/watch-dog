@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createSupportingTools, getScanResult, scanUrl } from "../public/webmcp.js";
+import { createSupportingTools, getScanResult, scanUrl, validScanReceipt } from "../public/webmcp.js";
 import { validScanResult } from "../public/results.js";
 const session = () => Response.json({ authenticated: true, csrf_token: "c".repeat(32), expires_at: "2026-09-01T13:00:00.000Z" });
 const fetchEvidence = { requested_url: "https://example.com/", final_url: "https://example.com/", redirect_chain: [], validated_hops: [{ hostname: "example.com", address_count: 2 }] };
@@ -45,6 +45,8 @@ test("scan_url uses authenticated URL and local-only HTML request shapes", async
   }
 });
 test("paste receipt validation accepts typed rejection and binds successful fetch traces", async () => {
+  assert.equal(validScanReceipt(receiptBody(), "https://example.com/"), true);
+  assert.equal(validScanReceipt({ ...receiptBody(), attacker: true }, "https://example.com/"), false);
   let calls = 0; const rejected = { mode: "paste_html", scan_ids: ["a".repeat(32)], accepted_targets: 0,
     rejected_candidates: 1, truncated: false, unscannable_reason: "unsupported_scheme", fetch_evidence: null };
   assert.equal(JSON.parse(await scanUrl({ targetUrl: "https://example.com/", pastedHtml: "<a href='mailto:x@y'>x</a>",
@@ -134,4 +136,6 @@ test("result contract cross-binds deterministic evidence and live Google attribu
   assert.equal(validScanResult({ ...valid, provider_observations: [{ ...provider, reference: null }] }, scanId), false);
   assert.equal(validScanResult({ ...valid, supporting_evidence: [{ ...evidence, category: "no_known_match" }] }, scanId), false);
   assert.equal(validScanResult({ ...valid, supporting_evidence: [{ ...evidence, source: "candidate:paste_url" }] }, scanId), false);
+  for (const claim of ["This URL is safe.", "Secure to visit.", "Clean and harmless.", "No threats found."])
+    assert.equal(validScanResult({ ...result(scanId), limitations: [claim] }, scanId), false, claim);
 });

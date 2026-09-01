@@ -1,4 +1,5 @@
-import { renderResults } from "/results.js";
+import { renderResults, validResultEnvelope } from "/results.js";
+import { validScanReceipt, validSession } from "/webmcp.js";
 const status = document.querySelector("#app-status"); const results = document.querySelector("#results");
 let csrf = null; let sessionGeneration = 0;
 function setStatus(message, kind = "ok") { if (status) { status.textContent = message; status.dataset.kind = kind; } }
@@ -13,17 +14,17 @@ async function request(path, init = {}) {
 }
 async function session() {
   const body = await request("/api/session");
-  if (typeof body?.csrf_token !== "string") throw new Error("malformed_response");
+  if (!validSession(body)) throw new Error("malformed_response");
   csrf = body.csrf_token;
   return body;
 }
-async function showReceipt(receipt) {
+async function showReceipt(receipt, expectedUrl) {
   const generation = sessionGeneration;
-  if (!Array.isArray(receipt?.scan_ids) || receipt.scan_ids.length > 16) throw new Error("malformed_response");
+  results.hidden = true;
+  if (!validScanReceipt(receipt, expectedUrl)) throw new Error("malformed_response");
   const records = await Promise.all(receipt.scan_ids.map(async (scanId) => {
-    if (!/^[a-f0-9]{32}$/u.test(scanId)) throw new Error("malformed_response");
     const body = await request(`/api/results/${scanId}`);
-    if (body?.status !== "ok" || typeof body.result !== "object") throw new Error("malformed_response");
+    if (!validResultEnvelope(body, scanId)) throw new Error("malformed_response");
     return body.result;
   }));
   try { await session(); } catch (error) { results.hidden = true; throw error; }
@@ -43,7 +44,8 @@ async function mutation(path, body, providerConsent = false) {
 async function busy(form, action) {
   const button = form.querySelector("button[type='submit']");
   if (button) button.disabled = true;
-  try { await action(); } catch (error) { setStatus(error?.message || "service_unavailable", "error"); }
+  try { await action(); } catch (error) { results.hidden = true;
+    setStatus(error?.message || "service_unavailable", "error"); }
   finally { if (button) button.disabled = false; }
 }
 const loginPanel = document.querySelector("#login-panel"); const scanPanel = document.querySelector("#scan-panel");
@@ -56,6 +58,7 @@ loginForm?.addEventListener("submit", (event) => {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ username: data.get("username"), password: data.get("password") }),
     });
+    if (!validSession(body)) throw new Error("malformed_response");
     csrf = body.csrf_token; loginForm.reset();
     loginPanel.hidden = true; scanPanel.hidden = false;
     setStatus("Signed in. Scans remain ephemeral and session-owned.");
@@ -80,7 +83,8 @@ for (const [selector, makeBody] of [
       if (document.querySelector("#provider-consent")?.checked !== true)
         throw new Error("provider_consent_required");
       setStatus("Analyzing through the shared pipeline…");
-      await showReceipt(await mutation("/api/scans/paste", makeBody(new FormData(form)), true));
+      const payload = makeBody(new FormData(form));
+      await showReceipt(await mutation("/api/scans/paste", payload, true), payload.mode === "url" ? payload.url : undefined);
     });
   });
 }
@@ -94,7 +98,7 @@ document.querySelector("#inspect-page")?.addEventListener("click", (event) => vo
     await showReceipt(JSON.parse(await inspectCurrentPage({
       pageDocument: document, fetcher: globalThis.fetch.bind(globalThis), providerConsent: true,
     })));
-  } catch (error) { setStatus(error?.message || "service_unavailable", "error"); }
+  } catch (error) { results.hidden = true; setStatus(error?.message || "service_unavailable", "error"); }
   finally { button.disabled = false; }
 })());
 document.addEventListener("watchdog:scan-receipt", (event) => {
@@ -103,6 +107,7 @@ document.addEventListener("watchdog:scan-receipt", (event) => {
 });
 document.addEventListener("watchdog:scan-result", (event) => {
   const generation = sessionGeneration;
+  results.hidden = true;
   void session().then(() => { if (generation !== sessionGeneration || scanPanel?.hidden === true) return;
     renderResults(results, [event.detail]); setStatus("Rendered 1 bounded result."); })
     .catch((error) => { results.hidden = true; setStatus(error?.message || "service_unavailable", "error"); });

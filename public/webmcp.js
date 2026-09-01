@@ -1,4 +1,4 @@
-import { validScanResult } from "./results.js";
+import { validResultEnvelope } from "./results.js";
 
 export const WEBMCP_LIMITS = Object.freeze({
   maxCandidates: 32,
@@ -90,7 +90,7 @@ function exactKeys(value, expected) {
   return keys.length === expected.length && keys.every((key, index) => key === expected[index]);
 }
 
-function validSession(value) {
+export function validSession(value) {
   return isRecord(value) && exactKeys(value, ["authenticated", "csrf_token", "expires_at"]) &&
     value.authenticated === true && typeof value.csrf_token === "string" &&
     /^[A-Za-z0-9_-]{32}$/u.test(value.csrf_token) &&
@@ -237,6 +237,11 @@ function validPasteReceipt(value, expectedUrl = null) {
     })());
 }
 
+export function validScanReceipt(value, expectedUrl) {
+  return value?.mode === "live_page" ? validReceipt(value) :
+    validPasteReceipt(value, expectedUrl ?? value?.fetch_evidence?.requested_url ?? null);
+}
+
 export async function scanUrl({ fetcher, targetUrl, pastedHtml, baseUrl, signal, providerConsent = false }) {
   signal?.throwIfAborted();
   if (typeof targetUrl !== "string" || targetUrl.length === 0 || targetUrl.length > 2048 ||
@@ -248,7 +253,7 @@ export async function scanUrl({ fetcher, targetUrl, pastedHtml, baseUrl, signal,
     ? { mode: "url", url: targetUrl }
     : { mode: "html", html: pastedHtml, base_url: baseUrl ?? targetUrl };
   const body = await authenticatedPost(fetcher, "/api/scans/paste", payload, signal, providerConsent);
-  if (!validPasteReceipt(body, payload.mode === "url" ? payload.url : null)) throw new Error("malformed_response");
+  if (!validScanReceipt(body, payload.mode === "url" ? payload.url : null)) throw new Error("malformed_response");
   return JSON.stringify(body);
 }
 
@@ -263,8 +268,7 @@ export async function getScanResult({ fetcher, scanId, signal }) {
   const body = await jsonResponse(response, signal);
   signal?.throwIfAborted();
   if (!response.ok) throw typedError(response.status, body);
-  if (!isRecord(body) || !exactKeys(body, ["result", "status"]) || body.status !== "ok" ||
-    !validScanResult(body.result, scanId)) throw new Error("malformed_response");
+  if (!validResultEnvelope(body, scanId)) throw new Error("malformed_response");
   return JSON.stringify(body.result);
 }
 
@@ -375,7 +379,7 @@ export async function registerBrowserTool() {
   return controller;
 }
 
-if (typeof document !== "undefined") {
+if (typeof document !== "undefined" && new URL(document.URL).pathname === "/reference") {
   void registerBrowserTool().catch(() => {
     renderStatus(document, "WebMCP registration failed; no tool is being claimed as available.");
   });

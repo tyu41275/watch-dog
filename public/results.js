@@ -30,7 +30,8 @@ export function validScanResult(value, scanId = value?.scan_id) {
     !Array.isArray(value.contradicting_evidence) || !Array.isArray(value.provider_observations) ||
     !Array.isArray(value.limitations) || [value.supporting_evidence, value.contradicting_evidence,
       value.provider_observations, value.limitations].some((items) => items.length > MAX_ITEMS) ||
-    !value.limitations.every((item) => bounded(item, 512))) return false;
+    !value.limitations.every((item) => bounded(item, 512) &&
+      !/\b(?:safe|secure|clean|harmless|trustworthy|no threats?)\b/iu.test(item))) return false;
   const provider = (item) => {
     if (!record(item) || !exactKeys(item, ["category", "confidence", "error", "expires_at", "freshness",
       "observed_at", "provider", "queried_target", "reference", "source", "state"]) ||
@@ -92,6 +93,10 @@ export function validScanResult(value, scanId = value?.scan_id) {
   return canonical(value.canonical_target) && value.analysis_state !== "unscannable" && value.risk_label === risk &&
     value.analysis_state === state && value.confidence === confidence && same(supporting, expectedSupporting) &&
     same(contradicting, expectedContradicting);
+}
+export function validResultEnvelope(value, scanId) {
+  return record(value) && exactKeys(value, ["result", "status"]) && value.status === "ok" &&
+    validScanResult(value.result, scanId);
 }
 function element(tag, className, value) {
   const node = document.createElement(tag); if (className) node.className = className;
