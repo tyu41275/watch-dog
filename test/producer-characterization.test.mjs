@@ -62,6 +62,26 @@ test("the real corpus is deterministic without consulting a future protocol deco
   assert.equal(JSON.stringify(corpus).includes("protocol-core"), false);
 });
 
+test("concurrent corpus captures serialize the process-global UUID seam", async () => {
+  const randomUuid = crypto.randomUUID;
+  const [first, second] = await Promise.all([captureRealProducerCorpus(), captureRealProducerCorpus()]);
+  assert.deepEqual(first, second);
+  assert.equal(crypto.randomUUID, randomUuid);
+});
+
+test("a failed capture restores the UUID seam and releases the next capture", async () => {
+  const randomUuid = crypto.randomUUID;
+  const structuredCloneFunction = globalThis.structuredClone;
+  try {
+    globalThis.structuredClone = () => { throw new Error("forced corpus failure"); };
+    await assert.rejects(captureRealProducerCorpus(), /forced corpus failure/u);
+  } finally {
+    globalThis.structuredClone = structuredCloneFunction;
+  }
+  assert.equal(crypto.randomUUID, randomUuid);
+  assert.deepEqual(await captureRealProducerCorpus(), corpus);
+});
+
 test("generic one-field walker covers the frozen mutation mechanics without validity claims", () => {
   const evidenceStore = stores("paste_html").find(({ stored }) => stored.supporting_evidence.length > 1);
   assert.ok(evidenceStore);

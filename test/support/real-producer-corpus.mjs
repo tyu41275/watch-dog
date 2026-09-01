@@ -57,7 +57,7 @@ function liveRequest(count, duplicate = false) {
   return parsed;
 }
 
-export async function captureRealProducerCorpus() {
+async function captureRealProducerCorpusExclusive() {
   const restoreUuid = installUuidSeam();
   try {
     const core = new CoordinatorCore();
@@ -117,4 +117,12 @@ export async function captureRealProducerCorpus() {
   } finally {
     restoreUuid();
   }
+}
+
+let captureQueue = Promise.resolve();
+
+export function captureRealProducerCorpus() {
+  const capture = captureQueue.then(captureRealProducerCorpusExclusive);
+  captureQueue = capture.catch(() => undefined);
+  return capture;
 }
