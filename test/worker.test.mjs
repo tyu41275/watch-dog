@@ -145,13 +145,17 @@ test("login bounds its stream and denies coordinator failures before cookie issu
   const attemptFailure = { ...env, SESSION_COORDINATOR: {
     idFromName: () => "global", get: () => ({ fetch: async () => { throw new Error("offline"); } }),
   } };
+  const resolutionFailures = [
+    { idFromName() { throw new Error("id unavailable"); }, get() { throw new Error("unused"); } },
+    { idFromName: () => "global", get() { throw new Error("stub unavailable"); } },
+  ].map((SESSION_COORDINATOR) => ({ ...env, SESSION_COORDINATOR }));
   const resetFailure = { ...env, SESSION_COORDINATOR: {
     idFromName: () => "global", get: () => ({ fetch: async (request) =>
       new URL(request.url).pathname.endsWith("attempt")
         ? Response.json({ allowed: true, retry_after_seconds: 0 })
         : new Response(null, { status: 503 }) }),
   } };
-  for (const failed of [attemptFailure, resetFailure]) {
+  for (const failed of [attemptFailure, resetFailure, ...resolutionFailures]) {
     const response = await worker.fetch(loginRequest({
       username: env.ADMIN_USERNAME, password: env.ADMIN_PASSWORD,
     }), failed);

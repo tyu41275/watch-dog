@@ -38,7 +38,11 @@ function json(body: unknown, status = 200): Response {
 }
 
 function coordinator(env: Env) {
-  return env.SESSION_COORDINATOR?.get(env.SESSION_COORDINATOR.idFromName("global"));
+  try {
+    return env.SESSION_COORDINATOR?.get(env.SESSION_COORDINATOR.idFromName("global"));
+  } catch {
+    return undefined;
+  }
 }
 
 async function boundedText(request: Request, maximum: number): Promise<string | null> {
