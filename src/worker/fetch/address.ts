@@ -49,6 +49,7 @@ function ipv6(value: string): Uint8Array | null {
   return bytes;
 }
 
+export function addressFamily(value: string): 4 | 6 | null { return ipv4(value) !== null ? 4 : ipv6(value) !== null ? 6 : null; }
 function prefix(bytes: Uint8Array, expected: number[], bits: number): boolean {
   const full = Math.floor(bits / 8);
   for (let index = 0; index < full; index += 1) {

@@ -68,7 +68,7 @@ test("Cloudflare DoH resolver bounds and extracts only A and AAAA answers", asyn
   assert.ok(calls.every(({ init }) => init.redirect === "error" && init.headers.accept === "application/dns-json"));
   for (const [body, headers] of [
     [{ Status: 2 }], [{ Status: 0, Answer: [{ type: 1, data: PUBLIC_ADDRESSES[0] }] }], [{ Status: 0, TC: "true", Answer: [] }],
-    [{ Status: 0, TC: 1, Answer: [] }], [{ Status: 0, TC: false, Answer: [{ type: "1", data: PUBLIC_ADDRESSES[0] }] }], [{ Status: 0, TC: false, Answer: [] }, { "content-type": "text/html" }], [{ Status: 0, TC: false, Answer: [] }, { "content-type": "application/dns-json", "content-encoding": "gzip" }],
+    [{ Status: 0, TC: 1, Answer: [] }], [{ Status: 0, TC: false, Answer: [{ type: "1", data: PUBLIC_ADDRESSES[0] }] }], [{ Status: 0, TC: false, Answer: [{ type: 1, data: null }] }], [{ Status: 0, TC: false, Answer: [{ type: 1, data: "not-an-ip" }] }], [{ Status: 0, TC: false, Answer: [{ type: 1, data: PUBLIC_ADDRESSES[1] }] }], [{ Status: 0, TC: false, Answer: [{ type: 28, data: PUBLIC_ADDRESSES[0] }] }], [{ Status: 0, TC: false, Answer: [] }, { "content-type": "text/html" }], [{ Status: 0, TC: false, Answer: [] }, { "content-type": "application/dns-json", "content-encoding": "gzip" }],
   ]) {
     await assert.rejects(createCloudflareDohResolver(async () => dnsJson(body, headers))("bad.example", new AbortController().signal), /dns response/);
   }
@@ -167,8 +167,8 @@ test("response, encoding, byte, fetch, DNS, and time limits are typed", async ()
   });
   assert.equal(failed.reason, "fetch_failed");
   const dns = await safeFetchHtml("https://missing.example.co/", {
-    resolver: createCloudflareDohResolver(async (url) => dnsJson({ Status: 0, TC: false, Answer: url.endsWith("type=A") ? [{ type: 1, data: null }] : [{ type: 28, data: PUBLIC_ADDRESSES[1] }] })), fetcher: async () => {
-      assert.fail("malformed DNS must not fetch");
+    resolver: createCloudflareDohResolver(async (url) => dnsJson({ Status: 0, TC: false, Answer: url.endsWith("type=A") ? [{ type: 1, data: PUBLIC_ADDRESSES[1] }] : [{ type: 28, data: PUBLIC_ADDRESSES[1] }] })), fetcher: async () => {
+      assert.fail("wrong-family DNS must not fetch");
     },
   });
   assert.equal(dns.reason, "dns_failure");

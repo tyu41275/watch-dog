@@ -2,10 +2,7 @@ import {
   canonicalizeUrl,
   type UnscannableReason,
 } from "../../shared/canonicalize.js";
-import {
-  admitPublicHost,
-  type AddressResolver,
-} from "./address.js";
+import { addressFamily, admitPublicHost, type AddressResolver } from "./address.js";
 
 export const SAFE_FETCH_LIMITS = {
   max_url_chars: 2_048,
@@ -112,6 +109,8 @@ async function dnsQuery(
   const addresses: string[] = []; for (const record of body.Answer) {
     const value = typeof record === "object" && record !== null ? record as { type?: unknown; data?: unknown } : null;
     if (value === null || !Number.isInteger(value.type) || typeof value.data !== "string") throw new TypeError("dns response invalid");
+    const family = addressFamily(value.data);
+    if ((value.type === 1 && family !== 4) || (value.type === 28 && family !== 6)) throw new TypeError("dns response invalid");
     if (value.type === recordType) addresses.push(value.data);
   }
   return addresses;
