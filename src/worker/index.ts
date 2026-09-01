@@ -19,6 +19,11 @@ import {
   executePasteScan,
   parsePasteRequest,
 } from "./fetch/paste.js";
+import {
+  LIVE_LIMITS,
+  executeLiveScan,
+  parseLiveRequest,
+} from "./live.js";
 
 interface AssetBinding {
   fetch(request: Request): Promise<Response>;
@@ -165,7 +170,11 @@ async function sessionStatus(request: Request, env: Env): Promise<Response> {
   const claims = await sessionClaims(request, env);
   return claims === null
     ? json({ error: "unauthorized" }, 401)
-    : json({ authenticated: true, expires_at: new Date(claims.exp * 1_000).toISOString() });
+    : json({
+        authenticated: true,
+        csrf_token: claims.csrf,
+        expires_at: new Date(claims.exp * 1_000).toISOString(),
+      });
 }
 
 async function logout(request: Request, env: Env): Promise<Response> {
@@ -233,6 +242,33 @@ async function pasteScan(request: Request, env: Env): Promise<Response> {
   }
 }
 
+async function liveScan(request: Request, env: Env): Promise<Response> {
+  const claims = await sessionClaims(request, env);
+  const binding = coordinator(env);
+  if (
+    claims === null || binding === undefined || !sameOriginMutation(request) ||
+    request.headers.get(CSRF_HEADER) !== claims.csrf
+  ) return json({ error: "unauthorized" }, 401);
+  const text = await boundedText(request, LIVE_LIMITS.max_request_bytes);
+  if (text === null) return json({ error: "invalid_request" }, 400);
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return json({ error: "invalid_request" }, 400);
+  }
+  const input = parseLiveRequest(value, new URL(request.url).origin);
+  if (input === null) return json({ error: "invalid_request" }, 400);
+  try {
+    const receipt = await executeLiveScan(input, {
+      store: (result) => storeResult(binding, claims.sid, result),
+    });
+    return json(receipt, 201);
+  } catch {
+    return json({ error: "scan_unavailable" }, 503);
+  }
+}
+
 export async function handleRequest(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   if (url.pathname === "/api/health" && request.method === "GET") {
@@ -243,6 +279,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
   if (url.pathname === "/api/session" && request.method === "GET") return sessionStatus(request, env);
   if (url.pathname === "/api/logout" && request.method === "POST") return logout(request, env);
   if (url.pathname === "/api/scans/paste" && request.method === "POST") return pasteScan(request, env);
+  if (url.pathname === "/api/scans/live" && request.method === "POST") return liveScan(request, env);
   const result = /^\/api\/results\/([a-f0-9]{32})$/u.exec(url.pathname);
   if (result !== null && request.method === "GET") return getResult(request, env, result[1] as string);
 
@@ -250,7 +287,23 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     return json({ error: "not_configured" }, 503);
   }
 
-  if (env.ASSETS) return env.ASSETS.fetch(request);
+  if (
+    request.method === "GET" &&
+    (url.pathname === "/reference.html" || (url.pathname === "/reference" && url.search !== ""))
+  ) {
+    url.pathname = "/reference";
+    url.search = "";
+    return Response.redirect(url, 308);
+  }
+
+  if (env.ASSETS) {
+    if (url.pathname === "/reference" && request.method === "GET") {
+      const assetUrl = new URL(request.url);
+      assetUrl.pathname = "/reference.html";
+      return env.ASSETS.fetch(new Request(assetUrl, request));
+    }
+    return env.ASSETS.fetch(request);
+  }
   return new Response("Watch Dog asset binding is unavailable", {
     status: 503,
     headers: { "content-type": "text/plain; charset=utf-8" },
