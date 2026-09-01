@@ -72,7 +72,8 @@ function exactKeys(value, expected) {
 
 function validSession(value) {
   return isRecord(value) && exactKeys(value, ["authenticated", "csrf_token", "expires_at"]) &&
-    value.authenticated === true && /^[A-Za-z0-9_-]{32}$/u.test(value.csrf_token) &&
+    value.authenticated === true && typeof value.csrf_token === "string" &&
+    /^[A-Za-z0-9_-]{32}$/u.test(value.csrf_token) &&
     typeof value.expires_at === "string" && Number.isFinite(Date.parse(value.expires_at)) &&
     new Date(value.expires_at).toISOString() === value.expires_at;
 }
@@ -105,21 +106,23 @@ function validReceipt(value) {
     !integer(value.observed_candidates) || value.observed_candidates > WEBMCP_LIMITS.maxCandidates ||
     !integer(value.accepted_targets) || !integer(value.rejected_candidates) ||
     typeof value.truncated !== "boolean" || !Array.isArray(value.scan_ids) ||
-    value.scan_ids.length > 16 || !value.scan_ids.every((id) => /^[a-f0-9]{32}$/u.test(id)) ||
+    value.scan_ids.length > 16 || !value.scan_ids.every((id) =>
+      typeof id === "string" && /^[a-f0-9]{32}$/u.test(id)) ||
     !Array.isArray(value.targets) || value.targets.length > 16 ||
     !Array.isArray(value.rejections) || value.rejections.length > 16
   ) return false;
   const validTarget = (target) => isRecord(target) && exactKeys(target, [
     "anchor_text_variants", "canonical_url", "occurrence_indices",
   ]) && validCanonicalTarget(target.canonical_url) &&
-    Array.isArray(target.occurrence_indices) && target.occurrence_indices.every((index) =>
-      integer(index) && index < WEBMCP_LIMITS.maxCandidates) &&
+    Array.isArray(target.occurrence_indices) && target.occurrence_indices.length > 0 &&
+    target.occurrence_indices.every((index) => integer(index) && index < WEBMCP_LIMITS.maxCandidates) &&
     Array.isArray(target.anchor_text_variants) && target.anchor_text_variants.every((text) =>
       typeof text === "string" && text.length <= WEBMCP_LIMITS.maxAnchorTextChars);
   const validRejection = (rejection) => isRecord(rejection) &&
     exactKeys(rejection, ["occurrence_index", "reason"]) &&
     integer(rejection.occurrence_index) && rejection.occurrence_index < WEBMCP_LIMITS.maxCandidates &&
     REJECTION_REASONS.has(rejection.reason);
+  if (!value.targets.every(validTarget) || !value.rejections.every(validRejection)) return false;
   const resultCount = Math.max(1, value.accepted_targets + value.rejected_candidates);
   const occurrenceIndices = [
     ...value.targets.flatMap((target) => target.occurrence_indices ?? []),
@@ -127,8 +130,7 @@ function validReceipt(value) {
   ];
   const completeSummaries = value.targets.length === value.accepted_targets &&
     value.rejections.length === value.rejected_candidates;
-  return value.targets.every(validTarget) && value.rejections.every(validRejection) &&
-    new Set(value.scan_ids).size === value.scan_ids.length &&
+  return new Set(value.scan_ids).size === value.scan_ids.length &&
     new Set(value.targets.map(({ canonical_url: url }) => url)).size === value.targets.length &&
     new Set(occurrenceIndices).size === occurrenceIndices.length &&
     value.accepted_targets + value.rejected_candidates <= value.observed_candidates &&

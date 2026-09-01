@@ -350,6 +350,16 @@ test("malformed and transport failures use the closed browser error vocabulary",
     new Response("not json", { status: 200 }),
     Response.json({ oops: true }),
     receiptResponse({ page_evidence_trust: "trusted" }),
+    receiptResponse({ scan_ids: [["a".repeat(32)]] }),
+    receiptResponse({ targets: [null] }),
+    receiptResponse({ rejections: [null] }),
+    receiptResponse({
+      targets: [{
+        canonical_url: "https://watch.example/one",
+        occurrence_indices: [],
+        anchor_text_variants: ["one"],
+      }],
+    }),
   ]) {
     let calls = 0;
     await assert.rejects(inspectCurrentPage({
@@ -359,6 +369,13 @@ test("malformed and transport failures use the closed browser error vocabulary",
   }
   await assert.rejects(inspectCurrentPage({
     pageDocument: page([]), fetcher: async () => Response.json({ csrf_token: "short" }),
+  }), /malformed_response/);
+  await assert.rejects(inspectCurrentPage({
+    pageDocument: page([]), fetcher: async () => Response.json({
+      authenticated: true,
+      csrf_token: ["c".repeat(32)],
+      expires_at: "2026-09-01T07:00:00.000Z",
+    }),
   }), /malformed_response/);
 });
 
