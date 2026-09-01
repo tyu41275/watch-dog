@@ -92,6 +92,14 @@ function receiptResponse(overrides = {}) {
   }, { status: 201 });
 }
 
+function resultResponse(scanId = "a".repeat(32)) {
+  return Response.json({ status: "ok", result: { kind: "analyzed", scan_id: scanId,
+    mode: "live_page", canonical_target: "https://watch.example/one", unscannable_reason: null,
+    outcome: "unknown", risk_label: "unknown", analysis_state: "unknown", confidence: "low",
+    supporting_evidence: [], contradicting_evidence: [], provider_observations: [],
+    limitation_codes: ["no_provider_observation", "confidence_basis"] } });
+}
+
 test("live request parsing is exact, bounded, route-owned, and timestamp-bounded", () => {
   const observedAt = "2026-09-01T06:30:00.000Z";
   const now = Date.parse(observedAt);
@@ -183,7 +191,7 @@ test("raw and post-resolution URL limits retain typed live rejections", async ()
   assert.deepEqual(receipt.rejections, [{ occurrence_index: 0, reason: "url_too_long" }]);
   assert.equal(receipt.accepted_targets, 0);
   assert.equal(stored[0].analysis_state, "unscannable");
-  assert.match(stored[0].limitations[0], /url_too_long/);
+  assert.equal(stored[0].unscannable_reason, "url_too_long");
 
   const extracted = extractRenderedPage(page([
     anchor("x".repeat(WEBMCP_LIMITS.maxHrefChars + 1), "oversized"),
@@ -298,6 +306,7 @@ test("tool contract is literal, read-only, untrusted, cancellable, and invocatio
   const posts = [];
   const fetcher = async (url, init) => {
     if (url === "/api/session") return sessionResponse();
+    if (url.startsWith("/api/results/")) return resultResponse(url.slice(-32));
     const body = JSON.parse(init.body);
     posts.push({ init, body });
     const targets = body.candidates.map((item) => ({
@@ -330,7 +339,7 @@ test("tool contract is literal, read-only, untrusted, cancellable, and invocatio
   assert.equal(posts[0].body.candidates.length, 1);
   assert.equal(posts[1].body.candidates.length, 2);
   assert.equal(posts[1].init.headers["x-watchdog-csrf"], "c".repeat(32));
-  assert.equal(posts[1].init.signal, undefined);
+  assert.equal(posts[1].init.signal instanceof AbortSignal, true);
   await assert.rejects(tool.execute({ target: "https://attacker.example" }), /invalid_arguments/);
   const aborted = new AbortController();
   aborted.abort();
@@ -354,7 +363,7 @@ test("in-flight cancellation reaches both session and scan fetch phases", async 
     controller.abort();
     await assert.rejects(pending, { name: "AbortError" });
     assert.equal(calls.at(-1).url, `/api/${blockedPhase === "session" ? "session" : "scans/live"}`);
-    assert.ok(calls.every(({ signal }) => signal === controller.signal));
+    assert.ok(calls.every(({ signal }) => signal instanceof AbortSignal));
   }
 });
 

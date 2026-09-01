@@ -1,9 +1,11 @@
 import {
+  outcomeFor,
   parseProviderObservation,
   parseScanResult,
   type AnalysisState,
   type Confidence,
   type Evidence,
+  type LimitationCode,
   type ProviderObservation,
   type ProviderSource,
   type RiskLabel,
@@ -51,9 +53,6 @@ export type AnalysisInput = AnalysisBase & (
       unscannable_reason: UnscannableReason;
     }
 );
-
-const CONFIDENCE_LIMITATION =
-  "Confidence describes evidence completeness, independence, freshness, and agreement, not likelihood of harm.";
 
 function malformedObservation(
   target: string,
@@ -162,7 +161,7 @@ function normalizeObservations(
   );
 }
 
-function providerEvidence(observation: ProviderObservation): Evidence {
+function providerEvidence(observation: ProviderObservation, index: number): Evidence {
   return {
     source: `${observation.source}:${observation.provider}`,
     target: observation.queried_target,
@@ -172,6 +171,7 @@ function providerEvidence(observation: ProviderObservation): Evidence {
     observed_at: observation.observed_at,
     freshness: observation.freshness,
     reference: observation.reference,
+    provider_observation_index: index,
   };
 }
 
@@ -185,6 +185,7 @@ function candidateEvidence(target: CanonicalCandidateTarget): Evidence[] {
       observed_at: occurrence.candidate.provenance.extracted_at,
       freshness: "fresh" as const,
       reference: occurrence.candidate.provenance.document_url,
+      provider_observation_index: null,
     }];
   });
   const unique = new Map(evidence.map((item) => [evidenceKey(item), item]));
@@ -193,26 +194,26 @@ function candidateEvidence(target: CanonicalCandidateTarget): Evidence[] {
 
 function evidenceKey(evidence: Evidence): string {
   return [evidence.source, evidence.target, evidence.category, evidence.observed_at,
-    evidence.freshness, evidence.reference ?? ""].join("\u0000");
+    evidence.freshness, evidence.reference ?? "", evidence.provider_observation_index ?? ""].join("\u0000");
 }
 
 function buildResult(input: AnalysisInput): ScanResult {
   timestamp(input.analyzed_at, "analyzed_at");
   if (input.target === null) {
     return {
+      kind: "unscannable",
       scan_id: input.scan_id,
       mode: input.mode,
       canonical_target: null,
+      unscannable_reason: input.unscannable_reason,
+      outcome: "unscannable",
       risk_label: "unknown",
       analysis_state: "unscannable",
       confidence: "low",
       supporting_evidence: [],
       contradicting_evidence: [],
       provider_observations: [],
-      limitations: [
-        `The target could not be scanned (${input.unscannable_reason}).`,
-        CONFIDENCE_LIMITATION,
-      ],
+      limitation_codes: ["confidence_basis"],
     };
   }
 
@@ -251,11 +252,11 @@ function buildResult(input: AnalysisInput): ScanResult {
   }
 
   const matchEvidence = observations
-    .filter((item) => item.state === "match")
-    .map(providerEvidence);
+    .map(providerEvidence)
+    .filter((_, index) => observations[index]?.state === "match");
   const noMatchEvidence = observations
-    .filter((item) => item.state === "no_match")
-    .map(providerEvidence);
+    .map(providerEvidence)
+    .filter((_, index) => observations[index]?.state === "no_match");
   const supporting = riskLabel === "no_known_match"
     ? noMatchEvidence
     : [...candidate, ...matchEvidence];
@@ -264,38 +265,30 @@ function buildResult(input: AnalysisInput): ScanResult {
     : noMatchEvidence;
   supporting.sort((left, right) => compareKey(evidenceKey(left), evidenceKey(right)));
   contradicting.sort((left, right) => compareKey(evidenceKey(left), evidenceKey(right)));
-
-  const limitations: string[] = [];
-  if (candidate.length > 0) {
-    limitations.push("URL-like displayed text resolves to a different target than the link destination.");
-  }
-  if (currentNoMatches.length > 0) {
-    limitations.push("A current no-match only means the provider returned no known match; it does not assess all risks.");
-  }
-  if (currentMatches.length > 0) {
-    limitations.push("A recognized provider match is qualified evidence for the reported category, not a complete risk inventory.");
-  }
-  if (staleResults.length > 0) {
-    limitations.push("Expired or freshness-unknown observations are shown but are not treated as current evidence.");
-  }
-  if (errors.length > 0) limitations.push("At least one provider lookup did not return usable evidence.");
-  if (observations.length === 0) limitations.push("No provider observation was available.");
-  if (analysisState === "conflicting") {
-    limitations.push("Current provider observations materially disagree; supporting and contradicting evidence are both shown.");
-  }
-  limitations.push(CONFIDENCE_LIMITATION);
+  const limitationCodes: LimitationCode[] = [];
+  if (candidate.length) limitationCodes.push("misleading_display_text");
+  if (currentNoMatches.length) limitationCodes.push("provider_no_match_scope");
+  if (currentMatches.length) limitationCodes.push("provider_match_scope");
+  if (staleResults.length) limitationCodes.push("stale_observation");
+  if (errors.length) limitationCodes.push("provider_unavailable");
+  if (!observations.length) limitationCodes.push("no_provider_observation");
+  if (analysisState === "conflicting") limitationCodes.push("conflicting_observations");
+  limitationCodes.push("confidence_basis");
 
   return {
+    kind: "analyzed",
     scan_id: input.scan_id,
     mode: input.mode,
     canonical_target: input.target.canonical_url,
+    unscannable_reason: null,
+    outcome: outcomeFor(riskLabel, analysisState, confidence),
     risk_label: riskLabel,
     analysis_state: analysisState,
     confidence,
     supporting_evidence: supporting,
     contradicting_evidence: contradicting,
     provider_observations: observations,
-    limitations,
+    limitation_codes: limitationCodes,
   };
 }
 

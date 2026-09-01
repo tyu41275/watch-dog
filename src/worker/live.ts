@@ -192,9 +192,7 @@ export async function executeLiveScan(
   const truncated = targets.length + rejections.length > LIVE_LIMITS.max_results;
   const retained = results.slice(0, LIVE_LIMITS.max_results);
   if (truncated) {
-    for (const result of retained) result.limitations.push(
-      `Only the first ${LIVE_LIMITS.max_results} bounded results were retained.`,
-    );
+    for (const result of retained) result.limitation_codes.push("results_truncated");
   }
   const scanIds: string[] = [];
   for (const result of retained) scanIds.push(await dependencies.store(result));

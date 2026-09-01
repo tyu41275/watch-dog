@@ -241,7 +241,7 @@ test("paste input is closed and local HTML stays inert on the shared pipeline", 
   assert.equal(stored[0].canonical_target, "https://source.example/one");
   assert.equal(stored[0].analysis_state, "unknown");
   assert.equal(stored[1].analysis_state, "unscannable");
-  assert.match(stored[1].limitations[0], /unsupported_scheme/);
+  assert.equal(stored[1].unscannable_reason, "unsupported_scheme");
 });
 test("URL paste provenance is paste_url and failures produce stored typed fallback", async () => {
   const stored = [];

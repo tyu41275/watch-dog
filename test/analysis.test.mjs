@@ -162,12 +162,13 @@ test("one current recognized positive supports known malicious with qualified ev
     observed_at: observed,
     freshness: "fresh",
     reference: positive.reference,
+    provider_observation_index: 0,
   }]);
   assert.deepEqual(result.contradicting_evidence, []);
   const serialized = JSON.parse(JSON.stringify(result));
   assert.equal(serialized.provider_observations[0].source, "fixture");
   assert.equal(serialized.supporting_evidence[0].source, "fixture:google_safe_browsing");
-  assert.match(result.limitations.join(" "), /qualified evidence/i);
+  assert.ok(result.limitation_codes.includes("provider_match_scope"));
 });
 
 test("current no-match is only no-known-match and never a safety claim", async () => {
@@ -203,6 +204,7 @@ test("misleading URL-like text independently supports suspicious and records ext
     observed_at: observed,
     freshness: "fresh",
     reference: "https://source.example/reference",
+    provider_observation_index: null,
   }]);
 });
 
@@ -220,8 +222,7 @@ test("confidence describes completeness and agreement rather than harm likelihoo
   assert.equal(positiveResult.confidence, noMatchResult.confidence);
   assert.equal(duplicatePositive.confidence, "medium");
   assert.equal(independentAgreement.confidence, "high");
-  assert.match(independentAgreement.limitations.at(-1), /completeness, independence, freshness, and agreement/i);
-  assert.match(independentAgreement.limitations.at(-1), /not likelihood of harm/i);
+  assert.equal(independentAgreement.limitation_codes.at(-1), "confidence_basis");
 });
 
 test("freshness and adapter bounds use exact conservative boundaries", async () => {

@@ -324,16 +324,19 @@ test("results are opaque, session-owned, and unavailable cross-session", async (
   const firstClaims = await verifySession(firstCookie, secrets);
 
   const result = {
+    kind: "analyzed",
     scan_id: "pending",
     mode: "paste_url",
     canonical_target: "https://example.test/",
+    unscannable_reason: null,
+    outcome: "unknown",
     risk_label: "unknown",
     analysis_state: "unknown",
     confidence: "low",
     supporting_evidence: [],
     contradicting_evidence: [],
     provider_observations: [],
-    limitations: ["No provider observation was available."],
+    limitation_codes: ["no_provider_observation", "confidence_basis"],
   };
   const seeded = await coordinator.fetch(new Request("https://coordinator/results", {
     method: "POST",

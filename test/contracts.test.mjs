@@ -60,20 +60,25 @@ test("provider observation is closed and validates provider literals", () => {
   assert.throws(() => parseProviderObservation({ ...provider, raw_payload: {} }), /unknown or missing/);
 });
 
-test("result validates distinct risk, state, confidence, evidence and limitations", () => {
+test("result validates the closed outcome, evidence linkage, and limitation codes", () => {
   const result = {
+    kind: "analyzed",
     scan_id: "scan_opaque",
     mode: "paste_url",
     canonical_target: "https://example.test/",
+    unscannable_reason: null,
+    outcome: "unknown_provider_error",
     risk_label: "unknown",
     analysis_state: "provider_error",
     confidence: "low",
     supporting_evidence: [],
     contradicting_evidence: [],
     provider_observations: [provider],
-    limitations: ["Provider is not configured."],
+    limitation_codes: ["provider_unavailable", "confidence_basis"],
   };
   assert.deepEqual(parseScanResult(result), result);
   assert.throws(() => parseScanResult({ ...result, risk_label: "safe" }), /invalid literal/);
-  assert.throws(() => parseScanResult({ ...result, limitations: [], extra: true }), /unknown or missing/);
+  assert.throws(() => parseScanResult({ ...result, outcome: "unknown" }), /impossible variant/);
+  assert.throws(() => parseScanResult({ ...result, limitation_codes: ["Threat-free"] }), /invalid literal/);
+  assert.throws(() => parseScanResult({ ...result, extra: true }), /unknown or missing/);
 });

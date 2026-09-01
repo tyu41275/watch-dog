@@ -26,15 +26,17 @@ export type PasteRequest =
   | { mode: "url"; url: string }
   | { mode: "html"; html: string; base_url: string };
 
-export interface PasteReceipt {
-  mode: ScanMode;
+interface PasteReceiptBase {
   scan_ids: string[];
   accepted_targets: number;
   rejected_candidates: number;
   truncated: boolean;
   unscannable_reason: UnscannableReason | null;
-  fetch_evidence: SafeFetchEvidence | null;
 }
+
+export type PasteReceipt =
+  | PasteReceiptBase & { mode: "paste_url"; fetch_evidence: SafeFetchEvidence }
+  | PasteReceiptBase & { mode: "paste_html" };
 
 export interface PasteDependencies {
   store(result: ScanResult): Promise<string>;
@@ -99,13 +101,13 @@ export async function executePasteScan(
     fetchEvidence = fetched.evidence;
     if (!fetched.ok) {
       return {
-        mode,
+        mode: "paste_url",
         scan_ids: await storeAll([unavailable(mode, fetched.reason, analyzedAt)], dependencies),
         accepted_targets: 0,
         rejected_candidates: 0,
         truncated: false,
         unscannable_reason: fetched.reason,
-        fetch_evidence: fetchEvidence,
+        fetch_evidence: fetched.evidence,
       };
     }
     html = fetched.html;
@@ -114,13 +116,12 @@ export async function executePasteScan(
     if (request.html.length > HTML_EXTRACTION_LIMITS.max_input_chars) {
       const reason = "input_too_large" as const;
       return {
-        mode,
+        mode: "paste_html",
         scan_ids: await storeAll([unavailable(mode, reason, analyzedAt)], dependencies),
         accepted_targets: 0,
         rejected_candidates: 0,
         truncated: false,
         unscannable_reason: reason,
-        fetch_evidence: null,
       };
     }
     const base = request.base_url.length <= SAFE_FETCH_LIMITS.max_url_chars
@@ -128,13 +129,12 @@ export async function executePasteScan(
     if (base === null || !base.ok || base.target.canonical_url.length > SAFE_FETCH_LIMITS.max_url_chars) {
       const reason: UnscannableReason = base === null || base.ok ? "url_too_long" : base.reason;
       return {
-        mode,
+        mode: "paste_html",
         scan_ids: await storeAll([unavailable(mode, reason, analyzedAt)], dependencies),
         accepted_targets: 0,
         rejected_candidates: 0,
         truncated: false,
         unscannable_reason: reason,
-        fetch_evidence: null,
       };
     }
     html = request.html;
@@ -189,17 +189,16 @@ export async function executePasteScan(
   const truncated = targets.length + rejectionReasons.length > PASTE_LIMITS.max_results;
   const retained = results.slice(0, PASTE_LIMITS.max_results);
   if (truncated) {
-    for (const result of retained) result.limitations.push(
-      `Only the first ${PASTE_LIMITS.max_results} bounded results were retained.`,
-    );
+    for (const result of retained) result.limitation_codes.push("results_truncated");
   }
-  return {
-    mode,
+  const common: PasteReceiptBase = {
     scan_ids: await storeAll(retained, dependencies),
     accepted_targets: targets.length,
     rejected_candidates: rejectionReasons.length,
     truncated,
     unscannable_reason: onlyReason,
-    fetch_evidence: fetchEvidence,
   };
+  return request.mode === "url"
+    ? { mode: "paste_url", ...common, fetch_evidence: fetchEvidence as SafeFetchEvidence }
+    : { mode: "paste_html", ...common };
 }

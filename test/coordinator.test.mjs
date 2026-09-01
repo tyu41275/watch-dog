@@ -11,16 +11,19 @@ import {
 } from "../dist/worker/coordinator.js";
 
 const result = {
+  kind: "analyzed",
   scan_id: "internal_pending",
   mode: "paste_url",
   canonical_target: "https://example.test/",
+  unscannable_reason: null,
+  outcome: "unknown",
   risk_label: "unknown",
   analysis_state: "unknown",
   confidence: "low",
   supporting_evidence: [],
   contradicting_evidence: [],
   provider_observations: [],
-  limitations: ["No provider observation was available."],
+  limitation_codes: ["no_provider_observation", "confidence_basis"],
 };
 
 class MemoryStorage {
@@ -70,8 +73,8 @@ test("opaque results are cloned, session-owned, expiring, and never durable", ()
   const owned = core.getResult("a".repeat(32), scanId, now);
   assert.equal(owned.status, "ok");
   assert.equal(owned.result.scan_id, scanId);
-  owned.result.limitations.push("caller mutation");
-  assert.equal(core.getResult("a".repeat(32), scanId, now).result.limitations.length, 1);
+  owned.result.limitation_codes.push("caller_mutation");
+  assert.equal(core.getResult("a".repeat(32), scanId, now).result.limitation_codes.length, 2);
   assert.deepEqual(
     core.getResult("a".repeat(32), scanId, now + RESULT_TTL_SECONDS * 1_000),
     { status: "expired" },
