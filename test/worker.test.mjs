@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   CSRF_HEADER,
+  createSession,
   readAuthSecrets,
   verifySession,
 } from "../dist/worker/auth.js";
@@ -124,6 +125,62 @@ test("wrong, missing, and default credentials deny generically and throttle", as
   assert.equal(throttled.status, 429);
   assert.deepEqual(await throttled.json(), { error: "invalid_credentials" });
   assert.match(throttled.headers.get("retry-after"), /^\d+$/);
+});
+
+test("login bounds its stream and denies coordinator failures before cookie issuance", async () => {
+  let pulls = 0;
+  let cancelled = false;
+  const body = new ReadableStream({
+    pull(controller) { pulls += 1; controller.enqueue(new Uint8Array(1_024)); },
+    cancel() { cancelled = true; },
+  });
+  const { env } = configured();
+  const oversized = await worker.fetch(new Request("https://watch.example/api/login", {
+    method: "POST", body, duplex: "half", headers: { origin: "https://watch.example" },
+  }), env);
+  assert.equal(oversized.status, 401);
+  assert.equal(cancelled, true);
+  assert.ok(pulls <= 6);
+
+  const attemptFailure = { ...env, SESSION_COORDINATOR: {
+    idFromName: () => "global", get: () => ({ fetch: async () => { throw new Error("offline"); } }),
+  } };
+  const resetFailure = { ...env, SESSION_COORDINATOR: {
+    idFromName: () => "global", get: () => ({ fetch: async (request) =>
+      new URL(request.url).pathname.endsWith("attempt")
+        ? Response.json({ allowed: true, retry_after_seconds: 0 })
+        : new Response(null, { status: 503 }) }),
+  } };
+  for (const failed of [attemptFailure, resetFailure]) {
+    const response = await worker.fetch(loginRequest({
+      username: env.ADMIN_USERNAME, password: env.ADMIN_PASSWORD,
+    }), failed);
+    assert.equal(response.status, 401);
+    assert.deepEqual(await response.json(), { error: "invalid_credentials" });
+    assert.equal(response.headers.get("set-cookie"), null);
+  }
+});
+
+test("session route rejects missing, tampered, expired, and rotated cookies", async () => {
+  const { env } = configured();
+  const secrets = readAuthSecrets(env);
+  const current = await createSession(secrets);
+  const expired = await createSession(secrets, Date.now() - 20 * 60 * 1_000);
+  const rotated = await createSession(readAuthSecrets({
+    ...env, SESSION_SIGNING_KEY: "r".repeat(32),
+  }));
+  const cookies = [null, `${current.cookie.split(";")[0]}x`, expired.cookie, rotated.cookie];
+  for (const cookie of cookies) {
+    const response = await worker.fetch(new Request("https://watch.example/api/session", {
+      headers: cookie === null ? {} : { cookie },
+    }), env);
+    assert.equal(response.status, 401);
+    assert.deepEqual(await response.json(), { error: "unauthorized" });
+  }
+  const wrongOrigin = await worker.fetch(new Request(loginRequest({
+    username: env.ADMIN_USERNAME, password: env.ADMIN_PASSWORD,
+  }), { headers: { origin: "https://attacker.example" } }), env);
+  assert.equal(wrongOrigin.status, 401);
 });
 
 test("results are opaque, session-owned, and unavailable cross-session", async () => {

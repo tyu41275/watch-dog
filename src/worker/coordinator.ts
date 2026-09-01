@@ -91,7 +91,7 @@ interface DurableStorage {
 }
 
 interface DurableState {
-  storage?: DurableStorage;
+  storage: DurableStorage;
 }
 
 function response(body: unknown, status = 200): Response {
@@ -116,13 +116,13 @@ async function jsonObject(request: Request): Promise<Record<string, unknown> | n
 export class SessionCoordinator {
   private readonly core = new CoordinatorCore();
 
-  constructor(private readonly state: DurableState = {}) {}
+  constructor(private readonly state: DurableState) {}
 
   private async attempt(key: string, nowMs: number) {
     const storageKey = `throttle:${key}`;
-    const stored = await this.state.storage?.get<ThrottleRecord>(storageKey);
+    const stored = await this.state.storage.get<ThrottleRecord>(storageKey);
     const next = advanceThrottle(stored, nowMs);
-    await this.state.storage?.put(storageKey, next.record);
+    await this.state.storage.put(storageKey, next.record);
     return next.decision;
   }
 
@@ -142,7 +142,7 @@ export class SessionCoordinator {
       const key = body?.key;
       if (typeof key !== "string") return response({ error: "invalid_request" }, 400);
       this.core.resetLogin(key);
-      await this.state.storage?.delete(`throttle:${key}`);
+      await this.state.storage.delete(`throttle:${key}`);
       return response({ ok: true });
     }
     if (url.pathname === "/results" && request.method === "POST") {

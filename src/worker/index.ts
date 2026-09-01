@@ -41,9 +41,41 @@ function coordinator(env: Env) {
   return env.SESSION_COORDINATOR?.get(env.SESSION_COORDINATOR.idFromName("global"));
 }
 
+async function boundedText(request: Request, maximum: number): Promise<string | null> {
+  const declared = Number(request.headers.get("content-length") ?? 0);
+  if (!Number.isSafeInteger(declared) || declared < 0 || declared > maximum) return null;
+  const reader = request.body?.getReader();
+  if (reader === undefined) return "";
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > maximum) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(value);
+    }
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return null;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 async function bodyCredentials(request: Request) {
-  const text = await request.text();
-  if (text.length > 4_096) return null;
+  const text = await boundedText(request, 4_096);
+  if (text === null) return null;
   try {
     const value = JSON.parse(text) as Record<string, unknown>;
     if (
@@ -70,11 +102,20 @@ async function login(request: Request, env: Env): Promise<Response> {
     credentials.username,
     secrets.signingKey,
   );
-  const attempt = await binding.fetch(new Request("https://coordinator/throttle/attempt", {
-    method: "POST",
-    body: JSON.stringify({ key }),
-  }));
-  const decision = await attempt.json() as { allowed?: boolean; retry_after_seconds?: number };
+  let decision: { allowed: boolean; retry_after_seconds: number };
+  try {
+    const attempt = await binding.fetch(new Request("https://coordinator/throttle/attempt", {
+      method: "POST",
+      body: JSON.stringify({ key }),
+    }));
+    const body = await attempt.json() as { allowed?: unknown; retry_after_seconds?: unknown };
+    if (!attempt.ok || typeof body.allowed !== "boolean" || typeof body.retry_after_seconds !== "number") {
+      return json({ error: "invalid_credentials" }, 401);
+    }
+    decision = { allowed: body.allowed, retry_after_seconds: body.retry_after_seconds };
+  } catch {
+    return json({ error: "invalid_credentials" }, 401);
+  }
   if (!decision.allowed) {
     const denied = json({ error: "invalid_credentials" }, 429);
     denied.headers.set("retry-after", String(decision.retry_after_seconds ?? 600));
@@ -83,10 +124,17 @@ async function login(request: Request, env: Env): Promise<Response> {
   if (!await verifyCredentials(credentials.username, credentials.password, secrets)) {
     return json({ error: "invalid_credentials" }, 401);
   }
-  await binding.fetch(new Request("https://coordinator/throttle/reset", {
-    method: "POST",
-    body: JSON.stringify({ key }),
-  }));
+  try {
+    const reset = await binding.fetch(new Request("https://coordinator/throttle/reset", {
+      method: "POST",
+      body: JSON.stringify({ key }),
+    }));
+    if (!reset.ok || (await reset.json() as { ok?: unknown }).ok !== true) {
+      return json({ error: "invalid_credentials" }, 401);
+    }
+  } catch {
+    return json({ error: "invalid_credentials" }, 401);
+  }
   const session = await createSession(secrets);
   const accepted = json({
     authenticated: true,

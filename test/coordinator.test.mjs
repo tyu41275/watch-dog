@@ -83,6 +83,12 @@ test("actual coordination object persists only hashed throttle records", async (
   const storage = new MemoryStorage();
   const state = { storage };
   const key = "x".repeat(43);
+  await assert.rejects(
+    new SessionCoordinator().fetch(new Request("https://coordinator/throttle/attempt", {
+      method: "POST", body: JSON.stringify({ key }),
+    })),
+    /storage/,
+  );
   for (let attempt = 0; attempt <= THROTTLE_ATTEMPTS; attempt += 1) {
     const object = new SessionCoordinator(state);
     const response = await object.fetch(new Request("https://coordinator/throttle/attempt", {
@@ -94,6 +100,19 @@ test("actual coordination object persists only hashed throttle records", async (
   }
   assert.deepEqual([...storage.values.keys()], [`throttle:${key}`]);
   assert.doesNotMatch(JSON.stringify([...storage.values]), /username|password|html|result/i);
+
+  const reset = await new SessionCoordinator(state).fetch(new Request("https://coordinator/throttle/reset", {
+    method: "POST", body: JSON.stringify({ key }),
+  }));
+  assert.equal(reset.status, 200);
+  assert.equal(storage.values.size, 0);
+  storage.values.set(`throttle:${key}`, {
+    started_at: Date.now() - THROTTLE_WINDOW_MS, attempts: THROTTLE_ATTEMPTS, blocked_until: 0,
+  });
+  const nextWindow = await new SessionCoordinator(state).fetch(new Request("https://coordinator/throttle/attempt", {
+    method: "POST", body: JSON.stringify({ key }),
+  }));
+  assert.equal((await nextWindow.json()).allowed, true);
 
   const object = new SessionCoordinator(state);
   const stored = await object.fetch(new Request("https://coordinator/results", {
