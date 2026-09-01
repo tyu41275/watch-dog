@@ -114,26 +114,25 @@ test("redirect private targets, loops, missing locations, and limits fail closed
   let calls = 0;
   const privateRedirect = await safeFetchHtml("https://public.example.co/start", {
     resolver: publicResolver,
-    fetcher: async () => {
-      calls += 1;
-      return new Response(null, { status: 302, headers: { location: "http://127.0.0.1/metadata" } });
-    },
+    fetcher: async () => new Response(null, {
+      status: 302, headers: { location: (calls += 1, "http://127.0.0.1/metadata") },
+    }),
   });
   assert.equal(privateRedirect.reason, "unsafe_address");
   assert.equal(calls, 1, "private redirect must not reach outbound fetch");
   const loop = await safeFetchHtml("https://public.example.co/a", {
     resolver: publicResolver,
     fetcher: async (url) => new Response(null, {
-      status: 302,
-      headers: { location: url.endsWith("/a") ? "/b" : "/a" },
+      status: 302, headers: { location: url.endsWith("/a") ? "/b" : "/a" },
     }),
   });
   assert.equal(loop.reason, "redirect_loop");
   const missing = await safeFetchHtml("https://public.example.co/", {
-    resolver: publicResolver,
-    fetcher: async () => new Response(null, { status: 302 }),
+    resolver: publicResolver, fetcher: async () => new Response(null, { status: 302 }),
   });
   assert.equal(missing.reason, "redirect_missing_location");
+  const longLocation = await safeFetchHtml("https://public.example.co/", { resolver: publicResolver, fetcher: async () => new Response(null, { status: 302, headers: { location: `/${"x/../".repeat(500)}final` } }) });
+  assert.equal(longLocation.reason, "url_too_long");
   const limited = await safeFetchHtml("https://public.example.co/r0", {
     resolver: publicResolver,
     fetcher: async (url) => {

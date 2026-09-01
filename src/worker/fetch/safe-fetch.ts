@@ -257,7 +257,8 @@ export async function safeFetchHtml(
     if (response.status >= 300 && response.status < 400) {
       await cancelBody(response);
       const location = response.headers.get("location");
-      if (location === null) return failed("redirect_missing_location", trace);
+      if (location === null || location.length > SAFE_FETCH_LIMITS.max_url_chars)
+        return failed(location === null ? "redirect_missing_location" : "url_too_long", trace);
       if (redirects >= SAFE_FETCH_LIMITS.max_redirects) return failed("redirect_limit", trace);
       const next = canonicalizeUrl(location, current);
       if (!next.ok) return failed(next.reason, trace);
