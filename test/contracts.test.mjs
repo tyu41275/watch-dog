@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   ANALYSIS_STATES,
   CONFIDENCE_LEVELS,
+  PROVIDER_SOURCES,
   PROVIDER_STATES,
   RISK_LABELS,
   SCAN_MODES,
@@ -17,6 +18,7 @@ test("literal contracts remain exact", () => {
   assert.deepEqual(ANALYSIS_STATES, ["complete", "unknown", "unscannable", "provider_error", "stale", "conflicting"]);
   assert.deepEqual(CONFIDENCE_LEVELS, ["high", "medium", "low"]);
   assert.deepEqual(SCAN_MODES, ["paste_url", "paste_html", "live_page"]);
+  assert.deepEqual(PROVIDER_SOURCES, ["live", "fixture"]);
   assert.deepEqual(PROVIDER_STATES, ["match", "no_match", "error", "not_configured"]);
 });
 
@@ -39,6 +41,7 @@ test("candidate schema accepts its closed shape and rejects additions", () => {
 
 const provider = {
   provider: "google_safe_browsing",
+  source: "fixture",
   queried_target: "https://example.test/",
   observed_at: "2026-08-31T00:00:00Z",
   expires_at: null,
@@ -53,6 +56,7 @@ const provider = {
 test("provider observation is closed and validates provider literals", () => {
   assert.deepEqual(parseProviderObservation(provider), provider);
   assert.throws(() => parseProviderObservation({ ...provider, state: "safe" }), /invalid literal/);
+  assert.throws(() => parseProviderObservation({ ...provider, source: "test" }), /invalid literal/);
   assert.throws(() => parseProviderObservation({ ...provider, raw_payload: {} }), /unknown or missing/);
 });
 

@@ -59,6 +59,7 @@ async function observe(scenario, request = { canonical_target: canonicalTarget, 
   assert.equal(adapter.source, "fixture");
   assert.equal(adapter.provider, "google_safe_browsing");
   const result = await adapter.observe(request);
+  assert.equal(result.source, "fixture");
   return parseProviderObservation(result);
 }
 
@@ -115,6 +116,7 @@ test("fixture matrix normalizes every provider outcome without owning a verdict"
     assert.equal(observation.error, error, name);
     assert.equal(observation.freshness, freshness, name);
     assert.equal(observation.confidence, confidence, name);
+    assert.equal(observation.source, "fixture", name);
     assert.equal("risk_label" in observation, false, name);
     assert.equal("analysis_state" in observation, false, name);
     assert.equal("raw_payload" in observation, false, name);
@@ -154,7 +156,7 @@ test("one current recognized positive supports known malicious with qualified ev
 
   assert.equal(result.risk_label, "known_malicious");
   assert.deepEqual(result.supporting_evidence, [{
-    source: "google_safe_browsing",
+    source: "fixture:google_safe_browsing",
     target: canonicalTarget,
     category: "social_engineering",
     observed_at: observed,
@@ -162,6 +164,9 @@ test("one current recognized positive supports known malicious with qualified ev
     reference: positive.reference,
   }]);
   assert.deepEqual(result.contradicting_evidence, []);
+  const serialized = JSON.parse(JSON.stringify(result));
+  assert.equal(serialized.provider_observations[0].source, "fixture");
+  assert.equal(serialized.supporting_evidence[0].source, "fixture:google_safe_browsing");
   assert.match(result.limitations.join(" "), /qualified evidence/i);
 });
 
@@ -241,11 +246,47 @@ test("freshness and adapter bounds use exact conservative boundaries", async () 
     observe(noMatch, { canonical_target: `${exactTarget}a`, requested_at: now }),
     /exceeds provider adapter limits/,
   );
+  await assert.rejects(
+    observe(noMatch, { canonical_target: canonicalTarget, requested_at: "not-a-timestamp" }),
+    /requested_at must be a timestamp/,
+  );
   const oversizedReference = await observe({
     ...noMatch,
     reference: `${exactReference}r`,
   });
   assert.equal(oversizedReference.error, "malformed_response");
+});
+
+test("fixture identity is immutable and provider-data malformation never throws", async () => {
+  const adapter = new FixtureProviderAdapter(noMatch);
+  assert.equal(Reflect.set(adapter, "source", "live"), false);
+  assert.equal(Reflect.set(adapter, "provider", "invented_provider"), false);
+  assert.equal(adapter.source, "fixture");
+  assert.equal(adapter.provider, "google_safe_browsing");
+
+  const malformed = [
+    { ...positive, observed_at: "not-a-timestamp", raw_payload: "observed-secret" },
+    { ...positive, expires_at: "not-a-timestamp", raw_payload: "expiry-secret" },
+    { ...positive, reference: 42, raw_payload: "reference-secret" },
+    { ...positive, category: "invented_category", raw_payload: "category-secret" },
+  ];
+  for (const scenario of malformed) {
+    const observation = await observe(scenario);
+    assert.deepEqual(observation, {
+      provider: "google_safe_browsing",
+      source: "fixture",
+      queried_target: canonicalTarget,
+      observed_at: now,
+      expires_at: null,
+      freshness: "unknown",
+      state: "error",
+      category: null,
+      confidence: "low",
+      reference: null,
+      error: "malformed_response",
+    });
+    assert.doesNotMatch(JSON.stringify(observation), /secret|invented_category|not-a-timestamp/);
+  }
 });
 
 test("aggregate re-derives freshness, rejects overflow, and does not mutate or depend on order", async () => {
@@ -294,13 +335,14 @@ test("malformed normalized shapes fail closed and raw fixture fields cannot esca
   const scenario = { ...positive, raw_payload: { secret: "must-not-escape" } };
   const observation = await observe(scenario);
   assert.equal(JSON.stringify(observation).includes("must-not-escape"), false);
-  assert.equal(Object.keys(observation).length, 10);
+  assert.equal(Object.keys(observation).length, 11);
 
   const malformedMatch = { ...observation, category: "invented_category" };
   const result = aggregate([malformedMatch]);
   assert.equal(result.risk_label, "unknown");
   assert.equal(result.analysis_state, "provider_error");
   assert.equal(result.provider_observations[0].error, "malformed_response");
+  assert.equal(result.provider_observations[0].source, "fixture");
   assert.equal(JSON.stringify(result).includes("invented_category"), false);
 });
 

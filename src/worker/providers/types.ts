@@ -2,6 +2,7 @@ import type {
   Freshness,
   ProviderId,
   ProviderObservation,
+  ProviderSource,
 } from "../../shared/contracts.js";
 
 export const PROVIDER_ADAPTER_LIMITS = {
@@ -28,7 +29,7 @@ export interface ProviderRequest {
 /** A provider normalizes one bounded lookup. It never owns an aggregate verdict. */
 export interface ProviderAdapter {
   readonly provider: ProviderId;
-  readonly source: "live" | "fixture";
+  readonly source: ProviderSource;
   observe(request: ProviderRequest): Promise<ProviderObservation>;
 }
 

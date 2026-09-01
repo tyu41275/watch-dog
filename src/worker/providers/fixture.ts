@@ -51,8 +51,9 @@ function errorObservation(
 ): ProviderObservation {
   return {
     provider: "google_safe_browsing",
+    source: "fixture",
     queried_target: request.canonical_target,
-    observed_at: request.requested_at,
+    observed_at: new Date(timestamp(request.requested_at, "requested_at")).toISOString(),
     expires_at: null,
     freshness: "unknown",
     state: error === "not_configured" ? "not_configured" : "error",
@@ -68,56 +69,73 @@ export class FixtureProviderAdapter implements ProviderAdapter {
   readonly provider = "google_safe_browsing" as const;
   readonly source = "fixture" as const;
 
-  constructor(private readonly scenario: FixtureProviderScenario) {}
+  constructor(private readonly scenario: FixtureProviderScenario) {
+    Object.freeze(this);
+  }
 
   async observe(request: ProviderRequest): Promise<ProviderObservation> {
     validateRequest(request);
-    const scenario = this.scenario;
-    if (
-      scenario.outcome === "timeout" ||
-      scenario.outcome === "quota" ||
-      scenario.outcome === "unavailable" ||
-      scenario.outcome === "malformed_response" ||
-      scenario.outcome === "not_configured"
-    ) {
-      return errorObservation(request, scenario.outcome);
-    }
+    try {
+      const scenario = this.scenario;
+      if (
+        scenario.outcome === "timeout" ||
+        scenario.outcome === "quota" ||
+        scenario.outcome === "unavailable" ||
+        scenario.outcome === "malformed_response" ||
+        scenario.outcome === "not_configured"
+      ) {
+        return errorObservation(request, scenario.outcome);
+      }
+      if (scenario.outcome !== "match" && scenario.outcome !== "no_match") {
+        return errorObservation(request, "malformed_response");
+      }
 
-    const observed = timestamp(scenario.observed_at, "observed_at");
-    const requested = timestamp(request.requested_at, "requested_at");
-    if (observed > requested) return errorObservation(request, "malformed_response");
-    if (scenario.expires_at !== null) {
-      const expires = timestamp(scenario.expires_at, "expires_at");
-      if (expires < observed) return errorObservation(request, "malformed_response");
-    }
-    const reference = scenario.reference ?? null;
-    if (reference !== null && reference.length > PROVIDER_ADAPTER_LIMITS.max_reference_chars) {
+      if (typeof scenario.observed_at !== "string") throw new TypeError("invalid observed_at");
+      const observed = timestamp(scenario.observed_at, "observed_at");
+      const requested = timestamp(request.requested_at, "requested_at");
+      if (observed > requested) return errorObservation(request, "malformed_response");
+
+      let expiresAt: string | null = null;
+      if (scenario.expires_at !== null) {
+        if (typeof scenario.expires_at !== "string") throw new TypeError("invalid expires_at");
+        const expires = timestamp(scenario.expires_at, "expires_at");
+        if (expires < observed) return errorObservation(request, "malformed_response");
+        expiresAt = new Date(expires).toISOString();
+      }
+      const reference = scenario.reference ?? null;
+      if (
+        reference !== null &&
+        (typeof reference !== "string" ||
+          reference.length > PROVIDER_ADAPTER_LIMITS.max_reference_chars)
+      ) {
+        return errorObservation(request, "malformed_response");
+      }
+      if (
+        scenario.outcome === "match" &&
+        (typeof scenario.category !== "string" ||
+          !RECOGNIZED_MALICIOUS_CATEGORIES.includes(scenario.category) ||
+          scenario.category.length > PROVIDER_ADAPTER_LIMITS.max_category_chars)
+      ) {
+        return errorObservation(request, "malformed_response");
+      }
+
+      const observedAt = new Date(observed).toISOString();
+      const freshness = freshnessAt(observedAt, expiresAt, request.requested_at);
+      return {
+        provider: this.provider,
+        source: this.source,
+        queried_target: request.canonical_target,
+        observed_at: observedAt,
+        expires_at: expiresAt,
+        freshness,
+        state: scenario.outcome === "match" ? "match" : "no_match",
+        category: scenario.outcome === "match" ? scenario.category : null,
+        confidence: freshness === "fresh" ? "medium" : "low",
+        reference,
+        error: null,
+      };
+    } catch {
       return errorObservation(request, "malformed_response");
     }
-    if (
-      scenario.outcome === "match" &&
-      (!RECOGNIZED_MALICIOUS_CATEGORIES.includes(scenario.category) ||
-        scenario.category.length > PROVIDER_ADAPTER_LIMITS.max_category_chars)
-    ) {
-      return errorObservation(request, "malformed_response");
-    }
-
-    const freshness = freshnessAt(
-      scenario.observed_at,
-      scenario.expires_at,
-      request.requested_at,
-    );
-    return {
-      provider: this.provider,
-      queried_target: request.canonical_target,
-      observed_at: scenario.observed_at,
-      expires_at: scenario.expires_at,
-      freshness,
-      state: scenario.outcome === "match" ? "match" : "no_match",
-      category: scenario.outcome === "match" ? scenario.category : null,
-      confidence: freshness === "fresh" ? "medium" : "low",
-      reference,
-      error: null,
-    };
   }
 }

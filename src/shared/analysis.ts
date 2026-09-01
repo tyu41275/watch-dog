@@ -5,6 +5,7 @@ import {
   type Confidence,
   type Evidence,
   type ProviderObservation,
+  type ProviderSource,
   type RiskLabel,
   type ScanMode,
   type ScanResult,
@@ -57,9 +58,11 @@ const CONFIDENCE_LIMITATION =
 function malformedObservation(
   target: string,
   analyzedAt: string,
+  source: ProviderSource,
 ): ProviderObservation {
   return {
     provider: "google_safe_browsing",
+    source,
     queried_target: target,
     observed_at: analyzedAt,
     expires_at: null,
@@ -72,25 +75,31 @@ function malformedObservation(
   };
 }
 
+function observationSource(value: unknown): ProviderSource {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return "fixture";
+  return (value as { source?: unknown }).source === "live" ? "live" : "fixture";
+}
+
 function normalizedObservation(
   value: ProviderObservation,
   target: string,
   analyzedAt: string,
 ): ProviderObservation {
+  const source = observationSource(value);
   let observation: ProviderObservation;
   try {
     observation = parseProviderObservation(value);
     const observed = timestamp(observation.observed_at, "observed_at");
     const analyzed = timestamp(analyzedAt, "analyzed_at");
     if (observation.queried_target !== target || observed > analyzed) {
-      return malformedObservation(target, analyzedAt);
+      return malformedObservation(target, analyzedAt, source);
     }
     if (observation.expires_at !== null) {
       const expires = timestamp(observation.expires_at, "expires_at");
-      if (expires < observed) return malformedObservation(target, analyzedAt);
+      if (expires < observed) return malformedObservation(target, analyzedAt, source);
     }
   } catch {
-    return malformedObservation(target, analyzedAt);
+    return malformedObservation(target, analyzedAt, source);
   }
 
   const matchValid = observation.state !== "match" || (
@@ -109,7 +118,7 @@ function normalizedObservation(
     observation.error === "not_configured" && observation.category === null
   );
   if (!matchValid || !noMatchValid || !errorValid || !notConfiguredValid) {
-    return malformedObservation(target, analyzedAt);
+    return malformedObservation(target, analyzedAt, source);
   }
 
   const freshness = observation.state === "match" || observation.state === "no_match"
@@ -128,7 +137,7 @@ function compareKey(left: string, right: string): number {
 
 function observationKey(observation: ProviderObservation): string {
   return [
-    observation.provider, observation.queried_target, observation.observed_at,
+    observation.provider, observation.source, observation.queried_target, observation.observed_at,
     observation.expires_at ?? "", observation.freshness, observation.state,
     observation.category ?? "", observation.confidence,
     observation.reference ?? "", observation.error ?? "",
@@ -155,7 +164,7 @@ function normalizeObservations(
 
 function providerEvidence(observation: ProviderObservation): Evidence {
   return {
-    source: observation.provider,
+    source: `${observation.source}:${observation.provider}`,
     target: observation.queried_target,
     category: observation.state === "match"
       ? (observation.category ?? "unrecognized_match")
