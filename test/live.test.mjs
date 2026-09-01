@@ -433,3 +433,30 @@ test("unsupported WebMCP status rendering is inert", async () => {
     else globalThis.document = originalDocument;
   }
 });
+
+test("native registration exposes callable tools and abort-cleans a partial failure", async () => {
+  const originalDocument = globalThis.document; const originalFetch = globalThis.fetch;
+  const pageDocument = page([anchor("./native", "Native")]); const captured = []; const events = [];
+  pageDocument.defaultView = { CustomEvent: class { constructor(type, init) { this.type = type; this.detail = init.detail; } } };
+  pageDocument.dispatchEvent = (event) => events.push(event);
+  pageDocument.modelContext = { registerTool: async (tool, options) => captured.push({ tool, signal: options.signal }) };
+  let calls = 0; globalThis.document = pageDocument; globalThis.fetch = async () =>
+    ++calls === 1 ? sessionResponse() : receiptResponse();
+  try {
+    const controller = await registerBrowserTool();
+    assert.deepEqual(captured.map(({ tool }) => tool.name), ["inspect_current_page", "scan_url", "get_scan_result"]);
+    assert.equal(JSON.parse(await captured[0].tool.execute({})).mode, "live_page");
+    assert.equal(events[0].type, "watchdog:scan-receipt"); controller.abort();
+    assert.ok(captured.every(({ signal }) => signal.aborted));
+    let removed = false; let attempts = 0;
+    pageDocument.modelContext.registerTool = async (_tool, { signal }) => {
+      attempts += 1; if (attempts === 2) throw new Error("registration failed");
+      signal.addEventListener("abort", () => { removed = true; }, { once: true });
+    };
+    await assert.rejects(registerBrowserTool(), /registration failed/);
+    assert.equal(attempts, 2); assert.equal(removed, true);
+  } finally {
+    if (originalDocument === undefined) delete globalThis.document; else globalThis.document = originalDocument;
+    globalThis.fetch = originalFetch;
+  }
+});

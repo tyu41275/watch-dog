@@ -5,12 +5,12 @@ const runId = process.env.WATCHDOG_EVIDENCE_ID ?? new Date().toISOString().repla
 export default defineConfig({
   testDir: "./e2e",
   testIgnore: "**/recording.spec.mjs",
-  fullyParallel: false, workers: 1, retries: 1, reporter: "line",
+  fullyParallel: false, workers: 1, retries: 0, reporter: "line",
   outputDir: `test-results/playwright/${runId}`,
   use: {
     baseURL, browserName: "chromium",
     ...(channel ? { channel } : {}),
-    ignoreHTTPSErrors: true, trace: "on-first-retry", screenshot: "only-on-failure",
+    ignoreHTTPSErrors: true, trace: "retain-on-failure", screenshot: "only-on-failure",
     video: "retain-on-failure",
   },
   webServer: {

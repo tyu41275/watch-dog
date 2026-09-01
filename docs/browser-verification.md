@@ -12,7 +12,7 @@ WATCHDOG_BROWSER_CHANNEL=chrome npm run test:browser
 
 The browser injects `document.modelContext` only to discriminate registration and invocation integration when the local browser has no enabled WebMCP implementation. This shim is labeled integration evidence. It is not Chrome 149+, ChatGPT in-app-browser, or deployed WebMCP acceptance evidence. WD-P0-10 / issue #11 must reuse this stable journey against the immutable deployed revision in an actually supported browser.
 
-Trace is retained only on first retry; screenshots and video only on failure. Each run uses a unique timestamped output directory (or the explicit `WATCHDOG_EVIDENCE_ID`) so a later run cannot erase earlier evidence. Local `.wrangler/` and `test-results/` state is ignored by Git but remains available until an operator deliberately archives or removes it.
+Trace, screenshots, and video are retained only on failure; the acceptance profile does not retry. Each run uses a unique timestamped output directory (or the explicit `WATCHDOG_EVIDENCE_ID`) so a later run cannot erase earlier evidence. Local `.wrangler/` and `test-results/` state is ignored by Git but remains available until an operator deliberately archives or removes it.
 
 ## Operator recording profile
 `npm run record:demo` is a separate headed, operator-invoked rehearsal profile. It reuses the tested login and scan helpers, records video, and captures sanitized Paste and Live Page screenshots beneath a timestamped `artifacts/operator-recording/` directory (or `WATCHDOG_RECORDING_ID`). It does not replace acceptance assertions and its output is ignored by Git.

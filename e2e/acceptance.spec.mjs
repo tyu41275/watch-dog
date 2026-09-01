@@ -32,15 +32,19 @@ test("real Worker and browser seam completes the protected two-mode journey", as
   expect(await page.evaluate(() => globalThis.__watchDogXss)).toBe(0); expect(await page.locator("#results img, #results svg, #results script").count()).toBe(0);
   await page.evaluate(async () => {
     const { renderResults } = await import("/results.js");
-    globalThis.__renderProvider = (source) => renderResults(document.querySelector("#results"), [{
-      scan_id: "f".repeat(32), canonical_target: "https://example.com/", risk_label: "known_malicious",
-      analysis_state: "complete", confidence: "high", supporting_evidence: [], contradicting_evidence: [],
-      limitations: [], provider_observations: [{ provider: "google_safe_browsing", source, state: "match",
-        freshness: "fresh", category: "malware", reference: "https://advisory.example/reference" }],
-    }]); globalThis.__renderProvider("fixture");
+    globalThis.__renderProvider = (source) => { const target = "https://example.com/";
+      const observed_at = "2026-09-01T00:00:00.000Z"; const expires_at = "2026-09-01T00:01:00.000Z";
+      const reference = source === "live" ? "https://transparencyreport.google.com/safe-browsing/search" : "fixture";
+      renderResults(document.querySelector("#results"), [{ scan_id: "f".repeat(32), mode: "paste_url",
+        canonical_target: target, risk_label: "known_malicious", analysis_state: "complete", confidence: "medium",
+        supporting_evidence: [{ source: `${source}:google_safe_browsing`, target, category: "malware", observed_at,
+          freshness: "fresh", reference }], contradicting_evidence: [], limitations: [], provider_observations: [{
+          provider: "google_safe_browsing", source, queried_target: target, observed_at, expires_at,
+          freshness: "fresh", state: "match", category: "malware", confidence: "medium", reference, error: null }],
+      }]); }; globalThis.__renderProvider("fixture");
   });
   await expect(page.locator(".result-card")).not.toContainText("Advisory provided by Google"); await page.evaluate(() => globalThis.__renderProvider("live"));
-  await expect(page.locator(".result-card")).toContainText("Advisory provided by Google"); await expect(page.locator(".result-card")).toContainText("https://advisory.example/reference");
+  await expect(page.locator(".result-card")).toContainText("Advisory provided by Google"); await expect(page.locator(".result-card")).toContainText("https://transparencyreport.google.com/safe-browsing/search");
   await page.getByLabel("HTTP(S) URL").fill("http://127.0.0.1/");
   await page.getByRole("button", { name: "Scan URL" }).click(); await expect(page.locator(".result-card").first()).toContainText("unscannable");
   let releaseResult;
