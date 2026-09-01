@@ -6,6 +6,7 @@ import { PASTE_LIMITS, executePasteScan, parsePasteRequest } from "../dist/worke
 import { SAFE_FETCH_LIMITS, createCloudflareDohResolver, safeFetchHtml } from "../dist/worker/fetch/safe-fetch.js";
 const PUBLIC_ADDRESSES = ["93.184.216.34", "2606:4700:4700::1111"];
 const publicResolver = async () => PUBLIC_ADDRESSES;
+const dnsJson = (body, headers = { "content-type": "application/dns-json" }) => new Response(JSON.stringify(body), { headers });
 test("address admission rejects every special family and mixed DNS before fetch", async () => {
   const cases = [
     ["8.8.8.8", true], ["93.184.216.34", true], ["0.0.0.0", false],
@@ -56,10 +57,7 @@ test("Cloudflare DoH resolver bounds and extracts only A and AAAA answers", asyn
   const resolver = createCloudflareDohResolver(async (url, init) => {
     calls.push({ url, init });
     const v6 = url.includes("type=AAAA");
-    return Response.json({
-      Status: 0,
-      TC: false,
-      Answer: v6
+    return dnsJson({ Status: 0, TC: false, Answer: v6
         ? [{ type: 5, data: "alias.example." }, { type: 28, data: PUBLIC_ADDRESSES[1] }]
         : [{ type: 1, data: PUBLIC_ADDRESSES[0] }],
     });
@@ -67,27 +65,29 @@ test("Cloudflare DoH resolver bounds and extracts only A and AAAA answers", asyn
   const addresses = await resolver("public.example.co", new AbortController().signal);
   assert.deepEqual(addresses, PUBLIC_ADDRESSES);
   assert.equal(calls.length, 2);
-  assert.ok(calls.every(({ init }) => init.redirect === "error"));
-  assert.ok(calls.every(({ init }) => init.headers.accept === "application/dns-json"));
-  for (const body of [{ Status: 2 }, { Status: 0, TC: "true", Answer: [{ type: 1, data: PUBLIC_ADDRESSES[0] }] }, { Status: 0, TC: 1, Answer: [] }]) {
-    await assert.rejects(createCloudflareDohResolver(async () => Response.json(body))("bad.example", new AbortController().signal), /dns response invalid/);
+  assert.ok(calls.every(({ init }) => init.redirect === "error" && init.headers.accept === "application/dns-json"));
+  for (const [body, headers] of [
+    [{ Status: 2 }], [{ Status: 0, Answer: [{ type: 1, data: PUBLIC_ADDRESSES[0] }] }], [{ Status: 0, TC: "true", Answer: [] }],
+    [{ Status: 0, TC: 1, Answer: [] }], [{ Status: 0, TC: false, Answer: [] }, { "content-type": "text/html" }], [{ Status: 0, TC: false, Answer: [] }, { "content-type": "application/dns-json", "content-encoding": "gzip" }],
+  ]) {
+    await assert.rejects(createCloudflareDohResolver(async () => dnsJson(body, headers))("bad.example", new AbortController().signal), /dns response/);
   }
-  const oversized = createCloudflareDohResolver(async () => Response.json({
-    Status: 0, Answer: [], padding: "x".repeat(SAFE_FETCH_LIMITS.max_dns_response_bytes),
+  const oversized = createCloudflareDohResolver(async () => dnsJson({
+    Status: 0, TC: false, Answer: [], padding: "x".repeat(SAFE_FETCH_LIMITS.max_dns_response_bytes),
   }));
   await assert.rejects(oversized("large.example.co", new AbortController().signal), /body limit/);
   let cancelled = 0;
   const hanging = createCloudflareDohResolver(async () => new Response(new ReadableStream({
     pull() {}, cancel() { cancelled += 1; },
-  })));
+  }), { headers: { "content-type": "application/dns-json" } }));
   const abort = new AbortController();
   setTimeout(() => abort.abort(), 5);
   await assert.rejects(hanging("slow.example.co", abort.signal));
   assert.equal(cancelled, 2);
   cancelled = 0;
   const failedSibling = createCloudflareDohResolver(async (url) => url.endsWith("type=A")
-    ? Response.json({ Status: 2 })
-    : new Response(new ReadableStream({ pull() {}, cancel() { cancelled += 1; } })));
+    ? dnsJson({ Status: 2 })
+    : new Response(new ReadableStream({ pull() {}, cancel() { cancelled += 1; } }), { headers: { "content-type": "application/dns-json" } }));
   await assert.rejects(failedSibling("sibling.example.co", new AbortController().signal));
   assert.equal(cancelled, 1);
 });

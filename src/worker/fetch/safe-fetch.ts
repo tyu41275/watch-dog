@@ -100,13 +100,12 @@ async function dnsQuery(
     redirect: "error",
     signal,
   });
-  if (!response.ok) {
-    await cancelBody(response); throw new TypeError("dns response unavailable");
-  }
+  const mediaType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+  const encoding = response.headers.get("content-encoding")?.trim().toLowerCase();
+  if (!response.ok || mediaType !== "application/dns-json" || (encoding !== undefined && encoding !== "" && encoding !== "identity")) { await cancelBody(response); throw new TypeError("dns response unavailable"); }
   const bytes = await boundedBytes(response, SAFE_FETCH_LIMITS.max_dns_response_bytes, signal);
   const body = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as DnsJson;
-  if (body.Status !== 0 || (body.TC !== undefined && typeof body.TC !== "boolean")) throw new TypeError("dns response invalid");
-  if (body.TC === true || (body.Answer !== undefined && !Array.isArray(body.Answer))) throw new TypeError("dns response invalid");
+  if (body.Status !== 0 || typeof body.TC !== "boolean" || body.TC || (body.Answer !== undefined && !Array.isArray(body.Answer))) throw new TypeError("dns response invalid");
   if (body.Answer === undefined) return [];
   if (body.Answer.length > 64) throw new TypeError("dns answer limit exceeded");
   const recordType = type === "A" ? 1 : 28;
