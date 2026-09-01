@@ -62,6 +62,7 @@ async function jsonResponse(response, signal) {
   try {
     return await abortable(response.json(), signal);
   } catch (error) {
+    if (signal?.aborted) signal.throwIfAborted();
     if (error?.name === "AbortError") throw error;
     return null;
   }
@@ -207,7 +208,7 @@ export async function inspectCurrentPage({ pageDocument, fetcher, signal, provid
   return JSON.stringify(body);
 }
 
-function validPasteReceipt(value) {
+function validPasteReceipt(value, expectedUrl = null) {
   const integer = (item) => Number.isSafeInteger(item) && item >= 0;
   const evidence = value?.fetch_evidence;
   const traceUrl = (item) => item === "" || validCanonicalTarget(item);
@@ -229,7 +230,8 @@ function validPasteReceipt(value) {
     (value.unscannable_reason !== null) === (value.accepted_targets === 0 && value.rejected_candidates <= 1) &&
     validFetch && (value.mode === "paste_url") === (evidence !== null) && (evidence === null || (() => {
       const urls = [evidence.requested_url, ...evidence.redirect_chain]; const successful = total > 0 || value.unscannable_reason === "no_candidates";
-      return evidence.final_url === urls.at(-1) && evidence.validated_hops.every((hop, index) =>
+      let expected = null; try { const url = new URL(expectedUrl); url.hash = ""; expected = url.href; } catch { /* invalid input */ }
+      return (evidence.requested_url === "" || evidence.requested_url === expected) && evidence.final_url === urls.at(-1) && evidence.validated_hops.every((hop, index) =>
         urls[index] !== "" && traceUrl(urls[index]) && new URL(urls[index]).hostname === hop.hostname) &&
         (!successful || (urls[0] !== "" && evidence.validated_hops.length === urls.length));
     })());
@@ -246,7 +248,7 @@ export async function scanUrl({ fetcher, targetUrl, pastedHtml, baseUrl, signal,
     ? { mode: "url", url: targetUrl }
     : { mode: "html", html: pastedHtml, base_url: baseUrl ?? targetUrl };
   const body = await authenticatedPost(fetcher, "/api/scans/paste", payload, signal, providerConsent);
-  if (!validPasteReceipt(body)) throw new Error("malformed_response");
+  if (!validPasteReceipt(body, payload.mode === "url" ? payload.url : null)) throw new Error("malformed_response");
   return JSON.stringify(body);
 }
 

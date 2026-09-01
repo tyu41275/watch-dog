@@ -31,13 +31,13 @@ test("scan_url uses authenticated URL and local-only HTML request shapes", async
     const calls = [];
     const fetcher = async (path, init) => { calls.push({ path, init });
       return calls.length === 1 ? session() : receipt(`paste_${mode}`); };
-    const output = JSON.parse(await scanUrl({ fetcher, targetUrl: "https://example.com/base/",
+    const output = JSON.parse(await scanUrl({ fetcher, targetUrl: "https://example.com/",
       providerConsent: true, ...(mode === "html"
         ? { pastedHtml: "<a href='./one'>One</a>" } : {}) }));
     assert.equal(output.mode, `paste_${mode}`);
     assert.deepEqual(JSON.parse(calls[1].init.body), mode === "url"
-      ? { mode: "url", url: "https://example.com/base/" }
-      : { mode: "html", html: "<a href='./one'>One</a>", base_url: "https://example.com/base/" });
+      ? { mode: "url", url: "https://example.com/" }
+      : { mode: "html", html: "<a href='./one'>One</a>", base_url: "https://example.com/" });
     assert.equal(calls[1].path, "/api/scans/paste");
     assert.equal(calls[1].init.headers["x-watchdog-csrf"], "c".repeat(32));
     assert.equal(calls[1].init.headers["x-watchdog-provider-consent"], "google_safe_browsing");
@@ -53,6 +53,11 @@ test("paste receipt validation accepts typed rejection and binds successful fetc
     final_url: "https://other.example/", validated_hops: [] } }; calls = 0;
   await assert.rejects(scanUrl({ targetUrl: "https://example.com/",
     fetcher: async () => ++calls === 1 ? session() : Response.json(malformed) }), /malformed_response/);
+  const wrongRequest = { ...receiptBody(), fetch_evidence: { ...fetchEvidence,
+    requested_url: "https://other.example/", final_url: "https://other.example/",
+    validated_hops: [{ hostname: "other.example", address_count: 1 }] } }; calls = 0;
+  await assert.rejects(scanUrl({ targetUrl: "https://example.com/",
+    fetcher: async () => ++calls === 1 ? session() : Response.json(wrongRequest) }), /malformed_response/);
 });
 test("get_scan_result is session-owned, typed, bounded and cancellable", async () => {
   const scanId = "a".repeat(32);

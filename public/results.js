@@ -134,7 +134,9 @@ function providerList(observations) {
   return section;
 }
 export function renderResults(container, results) {
-  if (!Array.isArray(results) || results.some((result) => !validScanResult(result))) throw new Error("malformed_response");
+  if (!Array.isArray(results) || results.some((result) => !validScanResult(result))) {
+    container.hidden = true; throw new Error("malformed_response");
+  }
   for (const old of container.querySelectorAll(".result-grid, .trust-note")) old.remove();
   const note = element("p", "trust-note", "Page, URL, and provider strings below are untrusted evidence rendered as inert text.");
   const grid = element("div", "result-grid");
