@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="referrer" content="no-referrer">
+    <title>Watch Dog Live Page Scan</title>
+    <script type="module" src="/webmcp.js"></script>
+    <script type="module" src="/live-page.js"></script>
+  </head>
+  <body>
+    <main>
+      <h1>Watch Dog-owned reference page</h1>
+      <p>This fixed same-origin page demonstrates invocation-time rendered-link inspection.</p>
+      <p>Page-derived labels and URLs are untrusted evidence. Watch Dog does not inspect unrelated tabs.</p>
+      <ul id="reference-links">
+        <li><a href="https://example.com/security">Absolute example</a></li>
+        <li><a href="./guidance">Relative guidance</a></li>
+        <li><a href="https://example.com/security#duplicate">Duplicate target</a></li>
+        <li><a href="mailto:help@example.com">Rejected mail link</a></li>
+        <li><a href="https://accounts.example.invalid/login">https://accounts.example.com/login</a></li>
+      </ul>
+      <p id="delayed-status" aria-live="polite">The delayed rendered anchor has not been inserted yet.</p>
+      <p id="webmcp-status" aria-live="polite">Checking WebMCP support…</p>
+      <p>Arbitrary third-party active-tab inspection requires a future extension with explicit permissions.</p>
+    </main>
+  </body>
+</html>
