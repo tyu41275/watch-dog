@@ -60,6 +60,7 @@ function page(anchors) {
   return {
     URL: "https://watch.example/reference",
     baseURI: "https://watch.example/reference",
+    defaultView: { confirm: () => true },
     querySelectorAll: (selector) => selector === "a[href]" ? anchors : [],
   };
 }
@@ -75,6 +76,7 @@ function sessionResponse() {
 function receiptResponse(overrides = {}) {
   return Response.json({
     mode: "live_page",
+    analyzed_at: "2026-09-01T06:30:00.000Z",
     scan_ids: ["a".repeat(32)],
     observed_candidates: 1,
     accepted_targets: 1,
@@ -147,6 +149,7 @@ test("live candidates use shared canonicalization, deduplication, rejection, and
     },
   });
   assert.equal(receipt.page_evidence_trust, "untrusted");
+  assert.equal(receipt.analyzed_at, observedAt);
   assert.equal(receipt.observed_candidates, 4);
   assert.equal(receipt.accepted_targets, 2);
   assert.equal(receipt.rejected_candidates, 1);
@@ -294,27 +297,26 @@ test("each extraction observes the current rendered anchors instead of a source 
 test("tool contract is literal, read-only, untrusted, cancellable, and invocation-time", async () => {
   const anchors = [anchor("./before", "Before")];
   const pageDocument = page(anchors);
+  let confirmations = 0;
+  pageDocument.defaultView.confirm = () => { confirmations += 1; return true; };
   const posts = [];
+  const stored = new Map();
   const fetcher = async (url, init) => {
     if (url === "/api/session") return sessionResponse();
+    if (url.startsWith("/api/results/")) {
+      return Response.json({ status: "ok", result: stored.get(url.split("/").at(-1)) });
+    }
     const body = JSON.parse(init.body);
     posts.push({ init, body });
-    const targets = body.candidates.map((item) => ({
-      canonical_url: new URL(item.raw_href, item.base_url).href,
-      occurrence_indices: [item.provenance.occurrence_index],
-      anchor_text_variants: [item.anchor_text],
-    }));
-    return Response.json({
-      mode: "live_page",
-      scan_ids: targets.map((_, index) => String(index).padStart(32, "0")),
-      observed_candidates: body.candidates.length,
-      accepted_targets: targets.length,
-      rejected_candidates: 0,
-      truncated: false,
-      page_evidence_trust: "untrusted",
-      targets,
-      rejections: [],
-    }, { status: 201 });
+    let serial = 0;
+    return Response.json(await executeLiveScan(body, {
+      now: () => new Date(body.observed_at),
+      store: async (result) => {
+        const id = (++serial).toString(16).padStart(32, "0");
+        stored.set(id, { ...result, scan_id: id });
+        return id;
+      },
+    }), { status: 201 });
   };
   const tool = createInspectCurrentPageTool(pageDocument, fetcher);
   assert.equal(tool.name, "inspect_current_page");
@@ -326,6 +328,7 @@ test("tool contract is literal, read-only, untrusted, cancellable, and invocatio
   await tool.execute({});
   anchors.push(anchor("./after", "After"));
   await tool.execute({});
+  assert.equal(confirmations, 2);
   assert.equal(posts[0].body.candidates.length, 1);
   assert.equal(posts[1].body.candidates.length, 2);
   assert.equal(posts[1].init.headers["x-watchdog-csrf"], "c".repeat(32));
@@ -336,14 +339,16 @@ test("tool contract is literal, read-only, untrusted, cancellable, and invocatio
   await assert.rejects(tool.execute({}, { signal: aborted.signal }), { name: "AbortError" });
 });
 
-test("in-flight cancellation reaches both session and scan fetch phases", async () => {
-  for (const blockedPhase of ["session", "scan"]) {
+test("in-flight cancellation reaches session, scan and result fetch phases", async () => {
+  for (const blockedPhase of ["session", "scan", "result"]) {
     const controller = new AbortController();
     const calls = [];
     const fetcher = async (url, init) => {
       calls.push({ url, signal: init.signal });
-      const phase = url === "/api/session" ? "session" : "scan";
-      if (phase !== blockedPhase) return phase === "session" ? sessionResponse() : receiptResponse();
+      const phase = url === "/api/session" ? "session" :
+        url === "/api/scans/live" ? "scan" : "result";
+      if (phase !== blockedPhase) return phase === "session" ? sessionResponse() :
+        phase === "scan" ? receiptResponse() : Response.json({ status: "ok", result: {} });
       return new Promise((_resolve, reject) => {
         init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true });
       });
@@ -352,9 +357,23 @@ test("in-flight cancellation reaches both session and scan fetch phases", async 
     await new Promise((resolve) => setImmediate(resolve));
     controller.abort();
     await assert.rejects(pending, { name: "AbortError" });
-    assert.equal(calls.at(-1).url, `/api/${blockedPhase === "session" ? "session" : "scans/live"}`);
+    assert.match(calls.at(-1).url, blockedPhase === "session" ? /^\/api\/session$/u :
+      blockedPhase === "scan" ? /^\/api\/scans\/live$/u : /^\/api\/results\//u);
     assert.ok(calls.every(({ signal }) => signal === controller.signal));
   }
+});
+
+test("provider disclosure requires explicit per-invocation human consent", async () => {
+  const pageDocument = page([]);
+  pageDocument.defaultView.confirm = (message) => {
+    assert.match(message, /canonical target URLs.*Google Safe Browsing/u);
+    return false;
+  };
+  const calls = [];
+  await assert.rejects(inspectCurrentPage({
+    pageDocument, fetcher: async (url) => { calls.push(url); return sessionResponse(); },
+  }), /provider_consent_required/u);
+  assert.deepEqual(calls, ["/api/session"]);
 });
 
 test("malformed and transport failures use the closed browser error vocabulary", async () => {
@@ -364,6 +383,15 @@ test("malformed and transport failures use the closed browser error vocabulary",
   }), /unauthorized/);
   await assert.rejects(inspectCurrentPage({
     pageDocument: page([]), fetcher: async () => { throw new TypeError("network down"); },
+  }), /service_unavailable/);
+  let resultCalls = 0;
+  await assert.rejects(inspectCurrentPage({
+    pageDocument: page([]), fetcher: async () => {
+      resultCalls += 1;
+      if (resultCalls === 1) return sessionResponse();
+      if (resultCalls === 2) return receiptResponse();
+      throw new TypeError("result network down");
+    },
   }), /service_unavailable/);
   for (const malformedTransport of [null, 7, { ok: true }]) {
     for (const phase of ["session", "scan"]) {
