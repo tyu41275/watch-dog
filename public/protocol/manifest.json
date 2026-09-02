@@ -8,7 +8,7 @@
     "src/shared/candidates.ts": "a57ced9f464ed11a482d93580cda34f92a2237d8e3ac0ae700997a5d19b2999e",
     "src/shared/canonicalize.ts": "c01102c01f021309210e64b93166dec04ffac62b4470b24c841e036311885fc1",
     "src/shared/contracts.ts": "d60d5cf496d7bac91ccd5dee9162169a1a9764d5276b8298190911b7ee30db2e",
-    "src/shared/scan-machine.ts": "603e1cfe2befd06c30c6860639e0f5817909f438033a97c9b64bfff040b0851d",
+    "src/shared/scan-machine.ts": "eb671704a40b91669a8e847e01daa3a54aa0de8b6fdadff1eb6b9b427f9ba8f2",
     "src/worker/fetch/address.ts": "06c9f65962f1b4064ec51700beddc806e41c4e29fac67016091d81fca8e74808",
     "src/worker/fetch/fetch-machine.ts": "945ccdf95659369e5f1a52db64d470e2947561a53dbff514602994e905d95ba8",
     "src/worker/fetch/response-scope.ts": "f4ddc56999fd02ce304eefad865ee7e53280f22ab88b755db2f39eb85bae1034"
@@ -61,9 +61,9 @@
         "src/worker/fetch/fetch-machine.ts",
         "src/worker/fetch/response-scope.ts"
       ],
-      "source_tree_sha256": "3fc5d6582789ce62bc69cc007f6555f99d59011273a93eca7ef6a513de5e6565",
-      "bytes": 53330,
-      "sha256": "ab81654a5e3f3ef2af9aaf5e99c4abe10e0bd3aaede8d2ea72134f61604b8ec1"
+      "source_tree_sha256": "f47a6e1fb86fc9ed881f48f5392f49b777e3798c21137a523331c48d3446cbd7",
+      "bytes": 57106,
+      "sha256": "780c87cae6970d083d4ece4b1de7aa3f2984b711dbafd2dae4d69197bec50166"
     }
   ]
 }

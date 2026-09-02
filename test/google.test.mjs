@@ -387,7 +387,7 @@ test("Paste provider effects are serialized while Live retains its bounded concu
           base_url: canonicalTarget, provenance: { source: "live_page",
             document_url: canonicalTarget, occurrence_index, extracted_at: requestedAt } })),
         extraction_rejections: [] }, { ...dependencies,
-          store: async (result) => { stored.push(result.canonical_target); return "d".repeat(32); } });
+          store: async (result) => { stored.push(result.canonical_target); return stored.length.toString(16).padStart(32, "d"); } });
     await new Promise((resolve) => setTimeout(resolve, 0));
     assert.equal(calls.length, mode === "paste" ? 1 : 16, mode);
     assert.equal(maximum, mode === "paste" ? 1 : 16, mode);
