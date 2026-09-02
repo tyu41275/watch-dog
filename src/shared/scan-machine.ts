@@ -11,14 +11,15 @@ export const SCAN_LIMITATIONS = {
   results: "Only the first 16 bounded results were retained.",
 } as const;
 
-export type ScanInput = { version: 1; kind: "paste_url"; analyzed_at: string; request_url: string; fetch: { started: number; limits: MachineLimits; journal: readonly JournalEntry[] } } | { version: 1; kind: "paste_html"; analyzed_at: string; base_url: string; html: string };
+export type ScanInput = { version: 1; kind: "paste_url"; analyzed_at: string; request_url: string; fetch: { started: number; limits: MachineLimits; journal: readonly JournalEntry[] } } | { version: 1; kind: "paste_html"; analyzed_at: string; base_url: string; html: string } | { version: 1; kind: "live_page"; analyzed_at: string; base_url: string; document_url: string };
 export type ExtractAtom = { kind: "ANCHOR"; href: string | null; href_overflow: boolean; text: string; text_overflow: boolean } | { kind: "OCCURRENCE_OVERFLOW" };
-export type ExtractEffect = { kind: "EXTRACT_HTML"; id: number; source: "paste_url" | "paste_html"; base_url: string; document_url: string; extracted_at: string; body: { kind: "fetch_body"; token: string; length: number; digest: string } | { kind: "inline_html"; html: string }; limits: { occurrences: 256; href_chars: 2048; anchor_text_chars: 512 } };
+export type ExtractEffect = { kind: "EXTRACT_HTML"; id: number; source: "paste_url" | "paste_html" | "live_page"; base_url: string; document_url: string; extracted_at: string; body: { kind: "fetch_body"; token: string; length: number; digest: string } | { kind: "inline_html"; html: string } | { kind: "rendered_anchors" }; limits: { occurrences: 256; href_chars: 2048; anchor_text_chars: 512 } };
 export type ProviderPrimitive = { provider: ProviderId; source: ProviderSource; queried_target: string; observed_at: string; expires_at: string | null; state: ProviderState; category: string | null; reference: string | null; error: ProviderErrorCode | null };
-export type ProviderEffect = { kind: "OBSERVE_PROVIDER"; id: number; target_ordinal: number; canonical_target: string; requested_at: string };
+type ProviderRequest = { target_ordinal: number; canonical_target: string; requested_at: string };
+export type ProviderEffect = { kind: "OBSERVE_PROVIDER"; id: number; target_ordinal: number; canonical_target: string; requested_at: string; batch?: readonly ProviderRequest[] };
 export type AllocateIdsEffect = { kind: "ALLOCATE_IDS"; id: number; count: number };
 export type ScanEffect = ExtractEffect | ProviderEffect | AllocateIdsEffect;
-export type ScanFact = { kind: "EXTRACTED"; effect_id: number; atoms: readonly ExtractAtom[] } | { kind: "PROVIDER_OBSERVED"; effect_id: number; observation: ProviderPrimitive } | { kind: "IDS_ALLOCATED"; effect_id: number; ids: readonly string[] };
+export type ScanFact = { kind: "EXTRACTED"; effect_id: number; atoms: readonly ExtractAtom[] } | { kind: "PROVIDER_OBSERVED"; effect_id: number; observation: ProviderPrimitive; batch?: readonly ProviderPrimitive[] } | { kind: "IDS_ALLOCATED"; effect_id: number; ids: readonly string[] };
 export interface ScanJournalEntry {
   effect: ScanEffect;
   fact: ScanFact;
@@ -28,7 +29,7 @@ export interface ScanExchange {
   version: 1;
   receipt: {
     receipt_id: string;
-    mode: "paste_url" | "paste_html";
+    mode: "paste_url" | "paste_html" | "live_page";
     scan_ids: string[];
     occurrence_count: OccurrenceCount;
     accepted_targets: number;
@@ -41,12 +42,11 @@ export interface ScanExchange {
   };
   entries: { result_ordinal: number; result_id: string; outcome: { kind: "target"; target_ordinal: number } | { kind: "rejection"; rejection_ordinal: number } | { kind: "source"; reason: UnscannableReason }; result: ScanResult }[];
 }
-
 type Rejection = { rejection_ordinal: number; occurrence_index: number; reason: UnscannableReason };
 type Outcome = { kind: "target"; target_ordinal: number } | { kind: "rejection"; rejection_ordinal: number } | { kind: "source"; reason: UnscannableReason };
 interface Context {
   input: ScanInput;
-  mode: "paste_url" | "paste_html";
+  mode: "paste_url" | "paste_html" | "live_page";
   base_url: string;
   document_url: string;
   evidence: MachineEvidence | null;
@@ -66,7 +66,6 @@ export interface ScanMachine {
   provider_cursor: number;
   exchange: ScanExchange | null;
 }
-
 type R = Record<string, unknown>;
 const object = (value: unknown, path: string): R => {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new TypeError(`${path} must be an object`);
@@ -127,7 +126,6 @@ const iso = (value: unknown, path: string) => {
   if (normalized !== parsed) throw new TypeError(`${path} must be a canonical timestamp`);
   return parsed;
 };
-
 function parseLimits(value: unknown, path: string): MachineLimits {
   const data = object(value, path);
   keys(data, ["max_url_chars", "max_redirects", "max_response_bytes", "operation_ms", "total_ms"], path);
@@ -200,7 +198,16 @@ function parseFetchJournal(value: unknown, path: string): JournalEntry[] {
 }
 function parseInput(value: unknown): ScanInput {
   const data = object(value, "input");
-  const kind = literal(data.kind, ["paste_url", "paste_html"] as const, "input.kind");
+  const kind = literal(data.kind, ["paste_url", "paste_html", "live_page"] as const, "input.kind");
+  if (kind === "live_page") {
+    keys(data, ["version", "kind", "analyzed_at", "base_url", "document_url"], "input");
+    if (data.version !== 1) throw new TypeError("input.version must be 1");
+    const base_url = string(data.base_url, "input.base_url"), document_url = string(data.document_url, "input.document_url");
+    const base = base_url.length <= SCAN_LIMITS.href_chars ? canonicalizeUrl(base_url) : { ok: false as const };
+    const document = document_url.length <= SCAN_LIMITS.href_chars ? canonicalizeUrl(document_url) : { ok: false as const };
+    if (!base.ok || !document.ok || base.target.canonical_url !== document.target.canonical_url) throw new TypeError("input live URLs are invalid");
+    return { version: 1, kind, analyzed_at: iso(data.analyzed_at, "input.analyzed_at"), base_url, document_url };
+  }
   if (kind === "paste_html") {
     keys(data, ["version", "kind", "analyzed_at", "base_url", "html"], "input");
     if (data.version !== 1) throw new TypeError("input.version must be 1");
@@ -214,7 +221,6 @@ function parseInput(value: unknown): ScanInput {
   keys(fetch, ["started", "limits", "journal"], "input.fetch");
   return { version: 1, kind, analyzed_at: iso(data.analyzed_at, "input.analyzed_at"), request_url: string(data.request_url, "input.request_url"), fetch: { started: integer(fetch.started, "input.fetch.started"), limits: parseLimits(fetch.limits, "input.fetch.limits"), journal: parseFetchJournal(fetch.journal, "input.fetch.journal") } };
 }
-
 type NewEffect<T> = T extends unknown ? Omit<T, "id"> : never;
 function queued(context: Context, id: number, effect: NewEffect<ScanEffect>, phase: ScanMachine["phase"]): ScanMachine {
   return frozen({ version: 1, phase, next_effect_id: id + 1, pending: { ...effect, id } as ScanEffect, context, provider_cursor: 0, exchange: null });
@@ -229,9 +235,12 @@ function allocation(machine: ScanMachine): ScanMachine {
 function sourceContext(input: ScanInput, mode: Context["mode"], reason: UnscannableReason, evidence: MachineEvidence | null, base = ""): Context {
   return { input, mode, base_url: base, document_url: base, evidence, occurrence_count: { kind: "exact", count: 0 }, groups: [], rejections: [], outcomes: [{ kind: "source", reason }], observations: [], text_overflow: [] };
 }
-
 export function createScanMachine(value: unknown): ScanMachine {
   const input = frozen(parseInput(value));
+  if (input.kind === "live_page") {
+    const context: Context = { input, mode: input.kind, base_url: input.base_url, document_url: input.document_url, evidence: null, occurrence_count: { kind: "exact", count: 0 }, groups: [], rejections: [], outcomes: [], observations: [], text_overflow: [] };
+    return queued(context, 1, { kind: "EXTRACT_HTML", source: input.kind, base_url: input.base_url, document_url: input.document_url, extracted_at: input.analyzed_at, body: { kind: "rendered_anchors" }, limits: { occurrences: 256, href_chars: 2048, anchor_text_chars: 512 } }, "AWAIT_EXTRACT");
+  }
   let context: Context;
   let body: ExtractEffect["body"];
   if (input.kind === "paste_url") {
@@ -249,7 +258,7 @@ export function createScanMachine(value: unknown): ScanMachine {
     context = { input, mode: input.kind, base_url: base.target.canonical_url, document_url: base.target.canonical_url, evidence: null, occurrence_count: { kind: "exact", count: 0 }, groups: [], rejections: [], outcomes: [], observations: [], text_overflow: [] };
     body = { kind: "inline_html", html: input.html };
   }
-  return queued(context, 1, { kind: "EXTRACT_HTML", source: context.mode, base_url: context.base_url, document_url: context.document_url, extracted_at: input.analyzed_at, body, limits: { occurrences: 256, href_chars: 2048, anchor_text_chars: 512 } }, "AWAIT_EXTRACT");
+  return queued(context, 1, { kind: "EXTRACT_HTML", source: input.kind, base_url: context.base_url, document_url: context.document_url, extracted_at: input.analyzed_at, body, limits: { occurrences: 256, href_chars: 2048, anchor_text_chars: 512 } }, "AWAIT_EXTRACT");
 }
 
 function parseEffect(value: unknown, path = "effect"): ScanEffect {
@@ -257,8 +266,13 @@ function parseEffect(value: unknown, path = "effect"): ScanEffect {
   const kind = literal(data.kind, ["EXTRACT_HTML", "OBSERVE_PROVIDER", "ALLOCATE_IDS"] as const, `${path}.kind`);
   const id = integer(data.id, `${path}.id`, true);
   if (kind === "OBSERVE_PROVIDER") {
-    keys(data, ["kind", "id", "target_ordinal", "canonical_target", "requested_at"], path);
-    return { kind, id, target_ordinal: integer(data.target_ordinal, `${path}.target_ordinal`), canonical_target: string(data.canonical_target, `${path}.canonical_target`), requested_at: iso(data.requested_at, `${path}.requested_at`) };
+    const batched = Object.hasOwn(data, "batch");
+    keys(data, ["kind", "id", "target_ordinal", "canonical_target", "requested_at", ...(batched ? ["batch"] : [])], path);
+    const request = { target_ordinal: integer(data.target_ordinal, `${path}.target_ordinal`), canonical_target: string(data.canonical_target, `${path}.canonical_target`), requested_at: iso(data.requested_at, `${path}.requested_at`) };
+    if (!batched) return { kind, id, ...request };
+    const batch = array(data.batch, `${path}.batch`, (raw, itemPath) => { const item = object(raw, itemPath); keys(item, ["target_ordinal", "canonical_target", "requested_at"], itemPath); return { target_ordinal: integer(item.target_ordinal, `${itemPath}.target_ordinal`), canonical_target: string(item.canonical_target, `${itemPath}.canonical_target`), requested_at: iso(item.requested_at, `${itemPath}.requested_at`) }; });
+    if (batch.length < 1 || batch.length > 16 || !same(batch[0], request)) throw new TypeError(`${path}.batch is invalid`);
+    return { kind, id, ...request, batch };
   }
   if (kind === "ALLOCATE_IDS") {
     keys(data, ["kind", "id", "count"], path);
@@ -271,9 +285,12 @@ function parseEffect(value: unknown, path = "effect"): ScanEffect {
   keys(limits, ["occurrences", "href_chars", "anchor_text_chars"], `${path}.limits`);
   if (limits.occurrences !== 256 || limits.href_chars !== 2048 || limits.anchor_text_chars !== 512) throw new TypeError(`${path}.limits are invalid`);
   const rawBody = object(data.body, `${path}.body`);
-  const bodyKind = literal(rawBody.kind, ["fetch_body", "inline_html"] as const, `${path}.body.kind`);
+  const bodyKind = literal(rawBody.kind, ["fetch_body", "inline_html", "rendered_anchors"] as const, `${path}.body.kind`);
   let body: ExtractEffect["body"];
-  if (bodyKind === "inline_html") {
+  if (bodyKind === "rendered_anchors") {
+    keys(rawBody, ["kind"], `${path}.body`);
+    body = { kind: bodyKind };
+  } else if (bodyKind === "inline_html") {
     keys(rawBody, ["kind", "html"], `${path}.body`);
     const html = string(rawBody.html, `${path}.body.html`);
     if (html.length > SCAN_LIMITS.html_chars) throw new RangeError(`${path}.body.html is over limit`);
@@ -282,7 +299,9 @@ function parseEffect(value: unknown, path = "effect"): ScanEffect {
     keys(rawBody, ["kind", "token", "length", "digest"], `${path}.body`);
     body = { kind: bodyKind, token: string(rawBody.token, `${path}.body.token`), length: integer(rawBody.length, `${path}.body.length`), digest: string(rawBody.digest, `${path}.body.digest`) };
   }
-  return { kind, id, source: literal(data.source, ["paste_url", "paste_html"] as const, `${path}.source`), base_url: string(data.base_url, `${path}.base_url`), document_url: string(data.document_url, `${path}.document_url`), extracted_at: iso(data.extracted_at, `${path}.extracted_at`), body, limits: { occurrences: 256, href_chars: 2048, anchor_text_chars: 512 } };
+  const source = literal(data.source, ["paste_url", "paste_html", "live_page"] as const, `${path}.source`);
+  if ((source === "live_page") !== (body.kind === "rendered_anchors")) throw new TypeError(`${path} source/body mismatch`);
+  return { kind, id, source, base_url: string(data.base_url, `${path}.base_url`), document_url: string(data.document_url, `${path}.document_url`), extracted_at: iso(data.extracted_at, `${path}.extracted_at`), body, limits: { occurrences: 256, href_chars: 2048, anchor_text_chars: 512 } };
 }
 function parseFact(value: unknown, effect: ScanEffect, path = "fact"): ScanFact {
   const data = object(value, path);
@@ -309,23 +328,16 @@ function parseFact(value: unknown, effect: ScanEffect, path = "fact"): ScanFact 
     return { kind: "EXTRACTED", effect_id: integer(data.effect_id, `${path}.effect_id`, true), atoms };
   }
   if (effect.kind === "OBSERVE_PROVIDER") {
-    keys(data, ["kind", "effect_id", "observation"], path);
+    const batched = effect.batch !== undefined;
+    keys(data, ["kind", "effect_id", "observation", ...(batched ? ["batch"] : [])], path);
     if (data.kind !== "PROVIDER_OBSERVED") throw new TypeError(`${path} is not bound to its effect`);
-    const raw = object(data.observation, `${path}.observation`);
-    keys(raw, ["provider", "source", "queried_target", "observed_at", "expires_at", "state", "category", "reference", "error"], `${path}.observation`);
-    const observation: ProviderPrimitive = {
-      provider: literal(raw.provider, PROVIDER_IDS, `${path}.observation.provider`),
-      source: literal(raw.source, PROVIDER_SOURCES, `${path}.observation.source`),
-      queried_target: string(raw.queried_target, `${path}.observation.queried_target`),
-      observed_at: string(raw.observed_at, `${path}.observation.observed_at`),
-      expires_at: nullable(raw.expires_at, `${path}.observation.expires_at`),
-      state: literal(raw.state, PROVIDER_STATES, `${path}.observation.state`),
-      category: nullable(raw.category, `${path}.observation.category`),
-      reference: nullable(raw.reference, `${path}.observation.reference`),
-      error: raw.error === null ? null : literal(raw.error, PROVIDER_ERROR_CODES, `${path}.observation.error`),
-    };
+    const parseObservation = (value: unknown, itemPath: string): ProviderPrimitive => { const raw = object(value, itemPath); keys(raw, ["provider", "source", "queried_target", "observed_at", "expires_at", "state", "category", "reference", "error"], itemPath); return { provider: literal(raw.provider, PROVIDER_IDS, `${itemPath}.provider`), source: literal(raw.source, PROVIDER_SOURCES, `${itemPath}.source`), queried_target: string(raw.queried_target, `${itemPath}.queried_target`), observed_at: string(raw.observed_at, `${itemPath}.observed_at`), expires_at: nullable(raw.expires_at, `${itemPath}.expires_at`), state: literal(raw.state, PROVIDER_STATES, `${itemPath}.state`), category: nullable(raw.category, `${itemPath}.category`), reference: nullable(raw.reference, `${itemPath}.reference`), error: raw.error === null ? null : literal(raw.error, PROVIDER_ERROR_CODES, `${itemPath}.error`) }; };
+    const observation = parseObservation(data.observation, `${path}.observation`);
     if (observation.queried_target !== effect.canonical_target) throw new TypeError(`${path}.observation target mismatch`);
-    return { kind: "PROVIDER_OBSERVED", effect_id: integer(data.effect_id, `${path}.effect_id`, true), observation };
+    if (!batched) return { kind: "PROVIDER_OBSERVED", effect_id: integer(data.effect_id, `${path}.effect_id`, true), observation };
+    const batch = array(data.batch, `${path}.batch`, parseObservation);
+    if (batch.length !== effect.batch!.length || !same(batch[0], observation) || batch.some((item, index) => item.queried_target !== effect.batch![index]!.canonical_target)) throw new TypeError(`${path}.batch target mismatch`);
+    return { kind: "PROVIDER_OBSERVED", effect_id: integer(data.effect_id, `${path}.effect_id`, true), observation, batch };
   }
   keys(data, ["kind", "effect_id", "ids"], path);
   if (data.kind !== "IDS_ALLOCATED") throw new TypeError(`${path} is not bound to its effect`);
@@ -357,6 +369,7 @@ function afterExtraction(machine: ScanMachine, fact: Extract<ScanFact, { kind: "
     const target = groups[0]!;
     next.phase = "AWAIT_PROVIDER";
     next.pending = { kind: "OBSERVE_PROVIDER", id: next.next_effect_id, target_ordinal: 0, canonical_target: target.canonical_url, requested_at: next.context.input.analyzed_at };
+    if (next.context.mode === "live_page") next.pending.batch = next.context.outcomes.flatMap((outcome) => outcome.kind === "target" ? [{ target_ordinal: outcome.target_ordinal, canonical_target: groups[outcome.target_ordinal]!.canonical_url, requested_at: next.context.input.analyzed_at }] : []);
     next.next_effect_id += 1;
     return frozen(next);
   }
@@ -383,9 +396,9 @@ function terminal(machine: ScanMachine, ids: readonly string[]): ScanMachine {
   const representedTargets = new Set(next.context.outcomes.flatMap((outcome) => (outcome.kind === "target" ? [outcome.target_ordinal] : [])));
   const representedRejections = new Set(next.context.outcomes.flatMap((outcome) => (outcome.kind === "rejection" ? [outcome.rejection_ordinal] : [])));
   const targets = next.context.groups.flatMap((target, target_ordinal) =>
-    representedTargets.has(target_ordinal) ? [{ target_ordinal, canonical_url: target.canonical_url, occurrences: target.occurrences.map(({ candidate }) => ({ occurrence_index: candidate.provenance.occurrence_index, raw_href: candidate.raw_href, anchor_text: candidate.anchor_text, anchor_text_overflow: next.context.text_overflow.includes(candidate.provenance.occurrence_index) })), anchor_text_variants: [...target.anchor_text_variants] }] : [],
+    (next.context.mode === "live_page" ? target_ordinal < SCAN_LIMITS.results : representedTargets.has(target_ordinal)) ? [{ target_ordinal, canonical_url: target.canonical_url, occurrences: target.occurrences.map(({ candidate }) => ({ occurrence_index: candidate.provenance.occurrence_index, raw_href: candidate.raw_href, anchor_text: candidate.anchor_text, anchor_text_overflow: next.context.text_overflow.includes(candidate.provenance.occurrence_index) })), anchor_text_variants: [...target.anchor_text_variants] }] : [],
   );
-  const rejections = next.context.rejections.filter(({ rejection_ordinal }) => representedRejections.has(rejection_ordinal));
+  const rejections = next.context.mode === "live_page" ? next.context.rejections.slice(0, SCAN_LIMITS.results) : next.context.rejections.filter(({ rejection_ordinal }) => representedRejections.has(rejection_ordinal));
   const only = next.context.groups.length === 0 && next.context.rejections.length === 1 ? next.context.rejections[0]!.reason : next.context.outcomes[0]?.kind === "source" ? next.context.outcomes[0].reason : null;
   next.exchange = { version: 1, receipt: { receipt_id: ids[0]!, mode: next.context.mode, scan_ids: ids.slice(1) as string[], occurrence_count: next.context.occurrence_count, accepted_targets: next.context.groups.length, rejected_candidates: next.context.rejections.length, truncated: sentinel || total > SCAN_LIMITS.results, unscannable_reason: only, fetch_evidence: next.context.evidence, targets, rejections }, entries };
   next.phase = "DONE";
@@ -401,6 +414,11 @@ export function reduceScanMachine(source: ScanMachine, value: unknown): ScanMach
   if (effect.kind === "EXTRACT_HTML" && fact.kind === "EXTRACTED") return afterExtraction(source, fact);
   if (effect.kind === "OBSERVE_PROVIDER" && fact.kind === "PROVIDER_OBSERVED") {
     const next = structuredClone(source);
+    if (effect.batch !== undefined) {
+      next.context.observations.push(...fact.batch!);
+      next.provider_cursor = effect.batch.length;
+      return allocation(frozen(next));
+    }
     next.context.observations.push(fact.observation);
     next.provider_cursor += 1;
     const following = next.context.outcomes[next.provider_cursor];

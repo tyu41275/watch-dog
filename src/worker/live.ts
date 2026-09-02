@@ -1,12 +1,19 @@
-import { aggregateAnalysis } from "../shared/analysis.js";
-import { collectLinkCandidates } from "../shared/candidates.js";
-import type { UnscannableReason } from "../shared/canonicalize.js";
 import {
   parseExtractedLinkCandidate,
   type ExtractedLinkCandidate,
   type ScanResult,
 } from "../shared/contracts.js";
+import {
+  createScanMachine,
+  reduceScanMachine,
+  scanJournalEntry,
+  type ExtractAtom,
+  type ProviderPrimitive,
+  type ScanInput,
+  type ScanJournalEntry,
+} from "../shared/scan-machine.js";
 import type { ProviderAdapter } from "./providers/types.js";
+import type { UnscannableReason } from "../shared/canonicalize.js";
 
 export const LIVE_LIMITS = {
   max_request_bytes: 256_000,
@@ -28,20 +35,13 @@ export interface LiveRequest {
 }
 
 export interface LiveReceipt {
-  mode: "live_page";
-  scan_ids: string[];
-  observed_candidates: number;
-  accepted_targets: number;
-  rejected_candidates: number;
-  truncated: boolean;
+  mode: "live_page"; scan_ids: string[]; observed_candidates: number;
+  accepted_targets: number; rejected_candidates: number; truncated: boolean;
   page_evidence_trust: "untrusted";
-  targets: Array<{
-    canonical_url: string;
-    occurrence_indices: number[];
-    anchor_text_variants: string[];
-  }>;
+  targets: Array<{ canonical_url: string; occurrence_indices: number[]; anchor_text_variants: string[] }>;
   rejections: Array<{ occurrence_index: number; reason: UnscannableReason }>;
 }
+export interface LiveOperation { version: 1; input: ScanInput; journal: readonly ScanJournalEntry[] }
 
 export interface LiveDependencies {
   store(result: ScanResult): Promise<string>;
@@ -135,83 +135,92 @@ export function parseLiveRequest(
   }
 }
 
-function unavailable(reason: UnscannableReason, analyzedAt: string): ScanResult {
-  return aggregateAnalysis({
-    scan_id: "pending",
-    mode: "live_page",
-    analyzed_at: analyzedAt,
-    target: null,
-    unscannable_reason: reason,
-  });
+function primitive(observation: Awaited<ReturnType<ProviderAdapter["observe"]>>): ProviderPrimitive {
+  return { provider: observation.provider, source: observation.source,
+    queried_target: observation.queried_target, observed_at: observation.observed_at,
+    expires_at: observation.expires_at, state: observation.state, category: observation.category,
+    reference: observation.reference, error: observation.error };
+}
+
+const freeze = <T>(value: T): T => { if (typeof value === "object" && value !== null) { for (const child of Object.values(value)) freeze(child); Object.freeze(value); } return value; };
+
+export async function executeLiveOperation(
+  request: LiveRequest,
+  dependencies: LiveDependencies,
+): Promise<LiveOperation> {
+  const serverTime = (dependencies.now ?? (() => new Date()))();
+  const analyzedAt = new Date(Math.max(serverTime.getTime(), Date.parse(request.observed_at)))
+    .toISOString();
+  const input: ScanInput = { version: 1, kind: "live_page", analyzed_at: analyzedAt,
+    base_url: request.document_url, document_url: request.document_url };
+  let machine = createScanMachine(input);
+  const atoms = [
+    ...request.candidates.map((candidate) => ({ index: candidate.provenance.occurrence_index,
+      atom: { kind: "ANCHOR", href: candidate.raw_href, href_overflow: false,
+        text: candidate.anchor_text, text_overflow: false } as ExtractAtom })),
+    ...request.extraction_rejections.map((rejection) => ({ index: rejection.occurrence_index,
+      atom: { kind: "ANCHOR", href: null, href_overflow: true, text: "",
+        text_overflow: false } as ExtractAtom })),
+  ].sort((left, right) => left.index - right.index).map(({ atom }) => atom);
+  const journal: ScanJournalEntry[] = [];
+  while (machine.pending?.kind !== "ALLOCATE_IDS") {
+    const effect = machine.pending;
+    if (effect === null) throw new TypeError("live scan ended before allocation");
+    const fact = effect.kind === "EXTRACT_HTML"
+      ? (effect.body.kind !== "rendered_anchors" ? (() => { throw new TypeError("invalid live effect"); })()
+        : { kind: "EXTRACTED" as const, effect_id: effect.id, atoms })
+      : { kind: "PROVIDER_OBSERVED" as const, effect_id: effect.id,
+          ...await (async () => {
+            const requests = effect.batch ?? [effect];
+            const batch = await Promise.all(requests.map(async (request) => dependencies.provider === undefined
+              ? { provider: "google_safe_browsing", source: "live", queried_target: request.canonical_target,
+                  observed_at: request.requested_at, expires_at: null, state: "not_configured",
+                  category: null, reference: null, error: "not_configured" } as const
+              : primitive(await dependencies.provider.observe({ canonical_target: request.canonical_target,
+                  requested_at: request.requested_at }))));
+            return effect.batch === undefined ? { observation: batch[0]! }
+              : { observation: batch[0]!, batch };
+          })() };
+    const entry = scanJournalEntry(effect, fact);
+    journal.push(entry);
+    machine = reduceScanMachine(machine, entry.fact);
+  }
+  return freeze(structuredClone({ version: 1 as const, input, journal }));
 }
 
 export async function executeLiveScan(
   request: LiveRequest,
   dependencies: LiveDependencies,
 ): Promise<LiveReceipt> {
-  const serverTime = (dependencies.now ?? (() => new Date()))();
-  const analyzedAt = new Date(Math.max(serverTime.getTime(), Date.parse(request.observed_at)))
-    .toISOString();
-  const collection = collectLinkCandidates(request.candidates);
-  const targets = collection.targets.filter(
-    ({ canonical_url }) => canonical_url.length <= LIVE_LIMITS.max_url_chars,
-  );
-  const rejections: Array<{ occurrence_index: number; reason: UnscannableReason }> = [
-    ...request.extraction_rejections,
-    ...collection.rejected.map(({ candidate, reason }) => ({
-      occurrence_index: candidate.provenance.occurrence_index,
-      reason,
-    })),
-    ...collection.targets
-      .filter(({ canonical_url }) => canonical_url.length > LIVE_LIMITS.max_url_chars)
-      .flatMap(({ occurrences }) => occurrences.map(({ candidate }) => ({
-        occurrence_index: candidate.provenance.occurrence_index,
-        reason: "url_too_long" as const,
-      }))),
-  ].sort((left, right) => left.occurrence_index - right.occurrence_index);
-  const retainedTargets = targets.slice(0, LIVE_LIMITS.max_results);
-  const results = await Promise.all(retainedTargets.map(async (target): Promise<ScanResult> => {
-    const providerObservations = dependencies.provider === undefined ? undefined : [
-      await dependencies.provider.observe({
-        canonical_target: target.canonical_url,
-        requested_at: analyzedAt,
-      }),
-    ];
-    return aggregateAnalysis({
-      scan_id: "pending",
-      mode: "live_page",
-      analyzed_at: analyzedAt,
-      target,
-      ...(providerObservations === undefined ? {} : {
-        provider_observations: providerObservations,
-      }),
-    });
-  }));
-  results.push(...rejections.map(({ reason }) => unavailable(reason, analyzedAt)));
-  if (results.length === 0) results.push(unavailable("no_candidates", analyzedAt));
-  const truncated = targets.length + rejections.length > LIVE_LIMITS.max_results;
-  const retained = results.slice(0, LIVE_LIMITS.max_results);
-  if (truncated) {
-    for (const result of retained) result.limitations.push(
-      `Only the first ${LIVE_LIMITS.max_results} bounded results were retained.`,
-    );
-  }
+  const operation = await executeLiveOperation(request, dependencies);
+  let machine = createScanMachine(operation.input);
+  for (const entry of operation.journal) machine = reduceScanMachine(machine, entry.fact);
+  const effect = machine.pending;
+  if (effect?.kind !== "ALLOCATE_IDS") throw new TypeError("live prefix is incomplete");
+  const provisional = Array.from({ length: effect.count }, (_, index) =>
+    (index + 1).toString(16).padStart(32, "0"));
+  const preview = reduceScanMachine(machine,
+    { kind: "IDS_ALLOCATED", effect_id: effect.id, ids: provisional }).exchange;
+  if (preview === null) throw new TypeError("live preview is incomplete");
   const scanIds: string[] = [];
-  for (const result of retained) scanIds.push(await dependencies.store(result));
+  for (const entry of preview.entries) scanIds.push(await dependencies.store(entry.result));
+  if (new Set(scanIds).size !== scanIds.length ||
+    scanIds.some((id) => !/^[a-f0-9]{32}$/u.test(id))) throw new TypeError("invalid allocated ID");
+  let receiptId: string;
+  do receiptId = crypto.randomUUID().replaceAll("-", "").toLowerCase();
+  while (scanIds.includes(receiptId));
+  const final = reduceScanMachine(machine,
+    { kind: "IDS_ALLOCATED", effect_id: effect.id, ids: [receiptId, ...scanIds] }).exchange;
+  if (final === null) throw new TypeError("live exchange is incomplete");
+  const receipt = final.receipt;
   return {
-    mode: "live_page",
-    scan_ids: scanIds,
-    observed_candidates: request.candidates.length + request.extraction_rejections.length,
-    accepted_targets: targets.length,
-    rejected_candidates: rejections.length,
-    truncated,
-    page_evidence_trust: "untrusted",
-    targets: targets.slice(0, LIVE_LIMITS.max_results).map((target) => ({
-      canonical_url: target.canonical_url,
-      occurrence_indices: target.occurrences.map(({ candidate }) =>
-        candidate.provenance.occurrence_index),
-      anchor_text_variants: target.anchor_text_variants,
-    })),
-    rejections: rejections.slice(0, LIVE_LIMITS.max_results),
+    mode: "live_page", scan_ids: [...receipt.scan_ids],
+    observed_candidates: receipt.occurrence_count.count,
+    accepted_targets: receipt.accepted_targets, rejected_candidates: receipt.rejected_candidates,
+    truncated: receipt.truncated, page_evidence_trust: "untrusted",
+    targets: receipt.targets.map((target) => ({ canonical_url: target.canonical_url,
+      occurrence_indices: target.occurrences.map(({ occurrence_index }) => occurrence_index),
+      anchor_text_variants: [...target.anchor_text_variants] })),
+    rejections: receipt.rejections.map(({ occurrence_index, reason }) => ({ occurrence_index, reason })),
   };
 }
