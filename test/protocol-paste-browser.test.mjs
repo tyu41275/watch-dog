@@ -123,4 +123,9 @@ test("check mode is read-only and rejects stale source and tampered derived arti
   assert.match(invoke().stderr, /RS-FC-ARTIFACT-STALE/u);
   cpSync("src/shared/canonicalize.ts", path.join(root, "src/shared/canonicalize.ts")); writeFileSync(path.join(root, "public/protocol/fetch-machine.generated.js"), readFileSync(path.join(root, "public/protocol/fetch-machine.generated.js"), "utf8") + " ");
   assert.match(invoke().stderr, /RS-FC-ARTIFACT-TAMPER/u);
+  cpSync("public/protocol/fetch-machine.generated.js", path.join(root, "public/protocol/fetch-machine.generated.js"));
+  const manifest = JSON.parse(readFileSync(path.join(root, "public/protocol/manifest.json"), "utf8"));
+  manifest.sources[Object.keys(manifest.sources)[0]] = "0".repeat(64);
+  writeFileSync(path.join(root, "public/protocol/manifest.json"), JSON.stringify(manifest, null, 2) + "\n");
+  assert.match(invoke().stderr, /RS-FC-ARTIFACT-TAMPER/u);
 });
