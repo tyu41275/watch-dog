@@ -82,13 +82,14 @@ function parseFact(value: unknown, effect: MachineEffect, path: string): Machine
   if (effect.kind === "discard") { keys(data, ["kind", "completed_at"], path); return { kind: "discard", completed_at: integer(data.completed_at, `${path}.completed_at`) }; }
   if (effect.kind === "metadata") {
     keys(data, ["kind", "completed_at", "status", "headers", "failure"], path);
-    const headers = record(data.headers, `${path}.headers`); keys(headers, Object.keys(effect.limits), `${path}.headers`);
+    const failure = data.failure === null ? null : literal(data.failure, ["invalid"] as const, `${path}.failure`);
+    const headers = record(data.headers, `${path}.headers`); keys(headers, failure === null ? Object.keys(effect.limits) : [], `${path}.headers`);
     const parsed: Record<string, HeaderAtom> = {};
     for (const [name, value] of Object.entries(headers)) {
       const atom = record(value, `${path}.headers.${name}`); keys(atom, ["value", "overflow"], `${path}.headers.${name}`);
       parsed[name] = { value: atom.value === null ? null : string(atom.value, `${path}.headers.${name}.value`), overflow: boolean(atom.overflow, `${path}.headers.${name}.overflow`) };
     }
-    return { kind: "metadata", completed_at: integer(data.completed_at, `${path}.completed_at`), status: integer(data.status, `${path}.status`), headers: parsed, failure: data.failure === null ? null : literal(data.failure, ["invalid"] as const, `${path}.failure`) };
+    return { kind: "metadata", completed_at: integer(data.completed_at, `${path}.completed_at`), status: integer(data.status, `${path}.status`), headers: parsed, failure };
   }
   keys(data, ["kind", "completed_at", "failure", "token", "length", "digest", "valid_utf8"], path);
   return { kind: "read", completed_at: integer(data.completed_at, `${path}.completed_at`), failure: data.failure === null ? null : literal(data.failure, ["timeout", "limit", "invalid"] as const, `${path}.failure`), token: string(data.token, `${path}.token`), length: integer(data.length, `${path}.length`), digest: string(data.digest, `${path}.digest`), valid_utf8: boolean(data.valid_utf8, `${path}.valid_utf8`) };

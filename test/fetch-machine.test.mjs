@@ -87,6 +87,16 @@ test("every systematic unknown and missing journal field rejects for every effec
   const pending = createFetchMachine("https://public.example.co/", LIMITS, 0);
   const fact = { kind: "dns", completed_at: 1, addresses: ["8.8.8.8"], overflow: false, failure: null };
   for (const mutant of oneFieldMutants(fact)) assert.throws(() => reduceFetchMachine(pending, mutant), TypeError);
+
+  const failed = [];
+  let failedMachine = createFetchMachine("https://public.example.co/", LIMITS, 0);
+  failedMachine = apply(failedMachine, fact, failed);
+  failedMachine = apply(failedMachine, { kind: "fetch", completed_at: 2, failure: null }, failed);
+  failedMachine = apply(failedMachine, { kind: "metadata", completed_at: 3, status: 0, headers: {}, failure: "invalid" }, failed);
+  assert.equal(failedMachine.terminal.reason, "invalid_response");
+  assert.deepEqual(replayFetchMachine("https://public.example.co/", LIMITS, 0, failed), failedMachine.terminal);
+  const openFailureHeaders = structuredClone(failed); openFailureHeaders[2].fact.headers.unknown_field = true;
+  assert.throws(() => replayFetchMachine("https://public.example.co/", LIMITS, 0, openFailureHeaders), TypeError);
 });
 
 test("metadata overflow and redirect semantics issue discard before disposition", () => {
