@@ -332,7 +332,7 @@ test("tool contract is literal, read-only, untrusted, cancellable, and invocatio
   assert.equal(posts[0].body.candidates.length, 1);
   assert.equal(posts[1].body.candidates.length, 2);
   assert.equal(posts[1].init.headers["x-watchdog-csrf"], "c".repeat(32));
-  assert.equal(posts[1].init.signal, undefined);
+  assert.ok(posts[1].init.signal instanceof AbortSignal);
   await assert.rejects(tool.execute({ target: "https://attacker.example" }), /invalid_arguments/);
   const aborted = new AbortController();
   aborted.abort();
@@ -359,7 +359,7 @@ test("in-flight cancellation reaches session, scan and result fetch phases", asy
     await assert.rejects(pending, { name: "AbortError" });
     assert.match(calls.at(-1).url, blockedPhase === "session" ? /^\/api\/session$/u :
       blockedPhase === "scan" ? /^\/api\/scans\/live$/u : /^\/api\/results\//u);
-    assert.ok(calls.every(({ signal }) => signal === controller.signal));
+    assert.ok(calls.every(({ signal }) => signal instanceof AbortSignal && signal.aborted));
   }
 });
 

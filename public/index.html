@@ -5,11 +5,45 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="referrer" content="no-referrer">
     <title>Watch Dog</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script type="module" src="/app.js"></script>
   </head>
   <body>
     <main>
       <h1>Watch Dog</h1>
-      <p>The evidence-first URL inspector is starting up.</p>
+      <p>Evidence-first URL inspection with explicit uncertainty and no “safe” claim.</p>
+      <section id="login-panel">
+        <h2>Judge sign in</h2>
+        <form id="login-form">
+          <label>Username <input name="username" autocomplete="username" required></label>
+          <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+          <button type="submit">Sign in</button>
+        </form>
+      </section>
+      <section id="scan-panel" hidden>
+        <button id="logout" type="button">Sign out</button>
+        <label class="consent"><input id="provider-consent" type="checkbox">
+          Allow this invocation to disclose canonical target URLs to Google Safe Browsing.</label>
+        <h2>Paste Scan</h2>
+        <form id="url-form">
+          <label>HTTP(S) URL <input name="url" type="url" required></label>
+          <button type="submit">Scan URL</button>
+        </form>
+        <form id="html-form">
+          <label>Effective base URL <input name="base_url" type="url" required></label>
+          <label>Inert HTML <textarea name="html" maxlength="200000" required></textarea></label>
+          <button type="submit">Scan pasted HTML</button>
+        </form>
+        <h2>Stored result</h2>
+        <form id="result-form">
+          <label>Opaque result ID <input name="scan_id" pattern="[a-f0-9]{32}" required></label>
+          <button type="submit">Get result</button>
+        </form>
+        <p><a href="/reference">Open the Watch Dog-owned Live Page Scan reference</a>.</p>
+      </section>
+      <p id="app-status" aria-live="polite">Initializing session…</p>
+      <p id="webmcp-status" aria-live="polite">Checking WebMCP support…</p>
+      <pre id="results" hidden aria-live="polite"></pre>
     </main>
   </body>
 </html>

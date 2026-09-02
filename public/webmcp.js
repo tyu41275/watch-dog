@@ -1,8 +1,13 @@
+import { sessionClientFor } from "./session-client.js";
+
 export const WEBMCP_LIMITS = Object.freeze({
   maxCandidates: 32,
   maxHrefChars: 2048,
   maxAnchorTextChars: 512,
+  maxPastedHtmlChars: 200_000,
 });
+
+const toolAnnotations = Object.freeze({ readOnlyHint: true, untrustedContentHint: true });
 
 export function extractRenderedPage(pageDocument, observedAt = new Date().toISOString()) {
   const anchors = Array.from(pageDocument.querySelectorAll("a[href]"));
@@ -17,59 +22,16 @@ export function extractRenderedPage(pageDocument, observedAt = new Date().toISOS
       continue;
     }
     const anchorText = String(anchor.textContent ?? "")
-      .replace(/\s+/gu, " ")
-      .trim()
-      .slice(0, WEBMCP_LIMITS.maxAnchorTextChars);
+      .replace(/\s+/gu, " ").trim().slice(0, WEBMCP_LIMITS.maxAnchorTextChars);
     candidates.push({
       raw_href: rawHref,
       anchor_text: anchorText,
       base_url: pageDocument.baseURI,
-      provenance: {
-        source: "live_page",
-        document_url: pageDocument.URL,
-        occurrence_index: occurrenceIndex,
-        extracted_at: observedAt,
-      },
+      provenance: { source: "live_page", document_url: pageDocument.URL,
+        occurrence_index: occurrenceIndex, extracted_at: observedAt },
     });
   }
   return { candidates, extraction_rejections: extractionRejections };
-}
-
-function typedError(status, body) {
-  if (status === 401 || status === 403) return new Error("unauthorized");
-  if (status === 400) return new Error("invalid_request");
-  if (body?.error === "scan_unavailable") return new Error("scan_unavailable");
-  if (body?.error === "malformed_response") return new Error("malformed_response");
-  return new Error("service_unavailable");
-}
-
-async function jsonResponse(response) {
-  try {
-    return await response.json();
-  } catch (error) {
-    if (error?.name === "AbortError") throw error;
-    return null;
-  }
-}
-
-async function safeFetch(fetcher, resource, init) {
-  try {
-    const response = await fetcher(resource, init);
-    if (!(response instanceof Response)) throw new Error("service_unavailable");
-    return response;
-  } catch (error) {
-    if (error?.name === "AbortError") throw error;
-    throw new Error("service_unavailable");
-  }
-}
-
-function validSession(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value) &&
-    Object.keys(value).sort().join() === "authenticated,csrf_token,expires_at" &&
-    value.authenticated === true && typeof value.csrf_token === "string" &&
-    /^[A-Za-z0-9_-]{32}$/u.test(value.csrf_token) &&
-    typeof value.expires_at === "string" && Number.isFinite(Date.parse(value.expires_at)) &&
-    new Date(value.expires_at).toISOString() === value.expires_at;
 }
 
 function confirmProviderDisclosure(pageDocument) {
@@ -78,86 +40,104 @@ function confirmProviderDisclosure(pageDocument) {
     "Watch Dog may send canonical target URLs to Google Safe Browsing for this scan. Continue?") === true;
 }
 
-export async function inspectCurrentPage({ pageDocument, fetcher, signal }) {
-  signal?.throwIfAborted();
-  const observedAt = new Date().toISOString();
-  const extraction = extractRenderedPage(pageDocument, observedAt);
-  const session = await safeFetch(fetcher, "/api/session", {
-    method: "GET",
-    credentials: "same-origin",
-    headers: { accept: "application/json" },
-    signal,
-  });
-  const sessionBody = await jsonResponse(session);
-  if (!session.ok) throw typedError(session.status, sessionBody);
-  if (!validSession(sessionBody)) throw new Error("malformed_response");
-  signal?.throwIfAborted();
-  if (!confirmProviderDisclosure(pageDocument)) {
-    throw new Error("provider_consent_required");
-  }
-  const requestBody = {
-    document_url: pageDocument.URL,
-    observed_at: observedAt,
-    ...extraction,
-  };
-  const response = await safeFetch(fetcher, "/api/scans/live", {
-    method: "POST",
-    credentials: "same-origin",
-    headers: {
-      accept: "application/json",
-      "content-type": "application/json",
-      "x-watchdog-csrf": sessionBody.csrf_token,
-    },
-    body: JSON.stringify(requestBody),
-    signal,
-  });
-  const body = await jsonResponse(response);
-  if (!response.ok) throw typedError(response.status, body);
-  try {
-    const exchange = await decodeLiveExchange({
-      request: requestBody,
-      receipt: body,
-      loadResult: async (id) => {
-        const result = await safeFetch(fetcher, `/api/results/${id}`, {
-          method: "GET", credentials: "same-origin",
-          headers: { accept: "application/json" }, signal,
-        });
-        const resultBody = await jsonResponse(result);
-        if (!result.ok) throw typedError(result.status, resultBody);
-        return resultBody;
-      },
-    });
-    return JSON.stringify(presentExchange(exchange));
-  } catch (error) {
-    if (error?.name === "AbortError" || [
-      "unauthorized", "invalid_request", "scan_unavailable", "service_unavailable",
-    ].includes(error?.message)) throw error;
-    throw new Error("malformed_response");
-  }
+function exactArguments(value, allowed) {
+  return typeof value === "object" && value !== null && !Array.isArray(value) &&
+    Object.keys(value).every((key) => allowed.includes(key));
 }
 
-export function createInspectCurrentPageTool(pageDocument, fetcher) {
+function bounded(value, maximum, required = false) {
+  return value === undefined ? !required : typeof value === "string" &&
+    value.length >= (required ? 1 : 0) && value.length <= maximum;
+}
+
+function controllerFor(pageDocument, fetcher, controller) {
+  return controller ?? sessionClientFor(pageDocument, fetcher);
+}
+
+export async function inspectCurrentPage({ pageDocument, fetcher, controller, signal }) {
+  signal?.throwIfAborted();
+  const observedAt = new Date().toISOString();
+  const request = { document_url: pageDocument.URL, observed_at: observedAt,
+    ...extractRenderedPage(pageDocument, observedAt) };
+  const output = await controllerFor(pageDocument, fetcher, controller).scanLive(request, {
+    consent: confirmProviderDisclosure(pageDocument), signal,
+  });
+  return JSON.stringify(output);
+}
+
+export function createInspectCurrentPageTool(pageDocument, fetcher, controller) {
   return {
     name: "inspect_current_page",
     title: "Inspect this Watch Dog reference page",
-    description: "Read the current rendered anchors on this fixed Watch Dog-owned reference page and analyze them as untrusted evidence. This does not inspect unrelated tabs or navigate.",
-    inputSchema: {
-      type: "object",
-      properties: {},
-      additionalProperties: false,
-    },
-    annotations: {
-      readOnlyHint: true,
-      untrustedContentHint: true,
-    },
+    description: "Read current rendered anchors on this fixed Watch Dog-owned reference page as untrusted evidence. This does not inspect unrelated tabs or navigate.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    annotations: toolAnnotations,
     async execute(argumentsObject = {}, context = {}) {
-      if (
-        typeof argumentsObject !== "object" || argumentsObject === null ||
-        Array.isArray(argumentsObject) || Object.keys(argumentsObject).length !== 0
-      ) throw new Error("invalid_arguments");
-      return inspectCurrentPage({ pageDocument, fetcher, signal: context.signal });
+      if (!exactArguments(argumentsObject, []) || Object.keys(argumentsObject).length !== 0) {
+        throw new Error("invalid_arguments");
+      }
+      return inspectCurrentPage({ pageDocument, fetcher, controller, signal: context.signal });
     },
   };
+}
+
+export function createSupportingTools(pageDocument, fetcher, controller) {
+  const client = controllerFor(pageDocument, fetcher, controller);
+  return [
+    {
+      name: "scan_url",
+      title: "Scan a URL or inert pasted HTML",
+      description: "Analyze one bounded URL, or bounded pasted HTML without executing it, through Watch Dog's shared evidence pipeline.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          targetUrl: { type: "string", maxLength: WEBMCP_LIMITS.maxHrefChars },
+          pastedHtml: { type: "string", maxLength: WEBMCP_LIMITS.maxPastedHtmlChars },
+          baseUrl: { type: "string", maxLength: WEBMCP_LIMITS.maxHrefChars },
+        },
+        required: ["targetUrl"],
+        additionalProperties: false,
+      },
+      annotations: toolAnnotations,
+      async execute(argumentsObject = {}, context = {}) {
+        if (!exactArguments(argumentsObject, ["targetUrl", "pastedHtml", "baseUrl"]) ||
+          !bounded(argumentsObject.targetUrl, WEBMCP_LIMITS.maxHrefChars, true) ||
+          !bounded(argumentsObject.pastedHtml, WEBMCP_LIMITS.maxPastedHtmlChars) ||
+          !bounded(argumentsObject.baseUrl, WEBMCP_LIMITS.maxHrefChars) ||
+          (argumentsObject.baseUrl !== undefined && argumentsObject.pastedHtml === undefined)) {
+          throw new Error("invalid_arguments");
+        }
+        const payload = argumentsObject.pastedHtml === undefined
+          ? { mode: "url", url: argumentsObject.targetUrl }
+          : { mode: "html", html: argumentsObject.pastedHtml,
+              base_url: argumentsObject.baseUrl ?? argumentsObject.targetUrl };
+        return JSON.stringify(await client.scanPaste(payload, {
+          consent: confirmProviderDisclosure(pageDocument), signal: context.signal,
+        }));
+      },
+    },
+    {
+      name: "get_scan_result",
+      title: "Get a session-owned scan result",
+      description: "Retrieve one bounded opaque result owned by the current authenticated session.",
+      inputSchema: {
+        type: "object",
+        properties: { scanId: { type: "string", pattern: "^[a-f0-9]{32}$" } },
+        required: ["scanId"],
+        additionalProperties: false,
+      },
+      annotations: toolAnnotations,
+      async execute(argumentsObject = {}, context = {}) {
+        if (!exactArguments(argumentsObject, ["scanId"]) ||
+          typeof argumentsObject.scanId !== "string" ||
+          !/^[a-f0-9]{32}$/u.test(argumentsObject.scanId)) {
+          throw new Error("invalid_arguments");
+        }
+        return JSON.stringify(await client.getResult(argumentsObject.scanId,
+          { signal: context.signal }));
+      },
+    },
+  ];
 }
 
 function renderStatus(pageDocument, message) {
@@ -165,21 +145,33 @@ function renderStatus(pageDocument, message) {
   if (status !== null) status.textContent = message;
 }
 
-export async function registerBrowserTool() {
-  if (document.modelContext === undefined) {
-    renderStatus(document, "WebMCP is unavailable in this browser; the reference page remains inspectable by people.");
+export async function registerBrowserTools(pageDocument = document,
+  fetcher = globalThis.fetch.bind(globalThis)) {
+  if (pageDocument.modelContext === undefined) {
+    renderStatus(pageDocument,
+      "WebMCP is unavailable in this browser; this page remains inspectable by people.");
     return null;
   }
-  const controller = new AbortController();
-  const tool = createInspectCurrentPageTool(document, globalThis.fetch.bind(globalThis));
-  await document.modelContext.registerTool(tool, { signal: controller.signal });
-  renderStatus(document, "WebMCP tool registered: inspect_current_page.");
-  return controller;
+  const registration = new AbortController();
+  const client = sessionClientFor(pageDocument, fetcher);
+  const tools = [createInspectCurrentPageTool(pageDocument, fetcher, client),
+    ...createSupportingTools(pageDocument, fetcher, client)];
+  try {
+    for (const tool of tools) {
+      await pageDocument.modelContext.registerTool(tool, { signal: registration.signal });
+    }
+  } catch (error) {
+    registration.abort(new DOMException("partial registration", "AbortError"));
+    renderStatus(pageDocument, "WebMCP registration failed; no tools are claimed available.");
+    throw error;
+  }
+  renderStatus(pageDocument,
+    "WebMCP tools registered: inspect_current_page, scan_url, get_scan_result.");
+  return registration;
 }
 
+export const registerBrowserTool = registerBrowserTools;
+
 if (typeof document !== "undefined") {
-  void registerBrowserTool().catch(() => {
-    renderStatus(document, "WebMCP registration failed; no tool is being claimed as available.");
-  });
+  void registerBrowserTools().catch(() => {});
 }
-import { decodeLiveExchange, presentExchange } from "./results.js";
