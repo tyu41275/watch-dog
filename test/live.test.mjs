@@ -295,26 +295,23 @@ test("tool contract is literal, read-only, untrusted, cancellable, and invocatio
   const anchors = [anchor("./before", "Before")];
   const pageDocument = page(anchors);
   const posts = [];
+  const stored = new Map();
   const fetcher = async (url, init) => {
     if (url === "/api/session") return sessionResponse();
+    if (url.startsWith("/api/results/")) {
+      return Response.json({ status: "ok", result: stored.get(url.split("/").at(-1)) });
+    }
     const body = JSON.parse(init.body);
     posts.push({ init, body });
-    const targets = body.candidates.map((item) => ({
-      canonical_url: new URL(item.raw_href, item.base_url).href,
-      occurrence_indices: [item.provenance.occurrence_index],
-      anchor_text_variants: [item.anchor_text],
-    }));
-    return Response.json({
-      mode: "live_page",
-      scan_ids: targets.map((_, index) => String(index).padStart(32, "0")),
-      observed_candidates: body.candidates.length,
-      accepted_targets: targets.length,
-      rejected_candidates: 0,
-      truncated: false,
-      page_evidence_trust: "untrusted",
-      targets,
-      rejections: [],
-    }, { status: 201 });
+    let serial = 0;
+    return Response.json(await executeLiveScan(body, {
+      now: () => new Date(body.observed_at),
+      store: async (result) => {
+        const id = (++serial).toString(16).padStart(32, "0");
+        stored.set(id, { ...result, scan_id: id });
+        return id;
+      },
+    }), { status: 201 });
   };
   const tool = createInspectCurrentPageTool(pageDocument, fetcher);
   assert.equal(tool.name, "inspect_current_page");
