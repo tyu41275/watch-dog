@@ -25,6 +25,76 @@ type AfterDiscard = { kind: "fail"; reason: UnscannableReason } | { kind: "redir
 export interface FetchMachine { limits: MachineLimits; started: number; current: string; visited: string[]; redirects: number; evidence: MachineEvidence; next_id: number; pending: MachineEffect | null; after_discard: AfterDiscard | null; terminal: MachineResult | null }
 export interface JournalEntry { effect: MachineEffect; fact: MachineFact }
 
+type RecordValue = Record<string, unknown>;
+const record = (value: unknown, path: string): RecordValue => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new TypeError(`${path} must be an object`);
+  return value as RecordValue;
+};
+const keys = (value: RecordValue, expected: readonly string[], path: string) => {
+  const actual = Object.keys(value).sort(); const wanted = [...expected].sort();
+  if (actual.length !== wanted.length || actual.some((key, index) => key !== wanted[index])) throw new TypeError(`${path} has unknown or missing fields`);
+};
+const integer = (value: unknown, path: string, positive = false) => {
+  if (!Number.isSafeInteger(value) || (value as number) < (positive ? 1 : 0)) throw new TypeError(`${path} must be ${positive ? "a positive" : "a non-negative"} integer`);
+  return value as number;
+};
+const string = (value: unknown, path: string) => {
+  if (typeof value !== "string") throw new TypeError(`${path} must be a string`);
+  return value;
+};
+const boolean = (value: unknown, path: string) => {
+  if (typeof value !== "boolean") throw new TypeError(`${path} must be a boolean`);
+  return value;
+};
+const literal = <T extends string>(value: unknown, allowed: readonly T[], path: string): T => {
+  if (typeof value !== "string" || !allowed.includes(value as T)) throw new TypeError(`${path} has an invalid literal`);
+  return value as T;
+};
+const timedFailure = (value: unknown, path: string): TimedFailure | null => value === null ? null : literal(value, ["timeout", "network_error", "capacity", "sealed", "invalid"] as const, path);
+
+function parseEffect(value: unknown, path: string): MachineEffect {
+  const data = record(value, path);
+  const kind = literal(data.kind, ["dns", "fetch", "metadata", "discard", "read"] as const, `${path}.kind`);
+  const common = { id: integer(data.id, `${path}.id`, true), issued_at: integer(data.issued_at, `${path}.issued_at`) };
+  if (kind === "dns") { keys(data, ["kind", "id", "issued_at", "deadline", "hostname"], path); return { kind, hostname: string(data.hostname, `${path}.hostname`), deadline: integer(data.deadline, `${path}.deadline`), ...common }; }
+  if (kind === "fetch") { keys(data, ["kind", "id", "issued_at", "deadline", "url"], path); return { kind, url: string(data.url, `${path}.url`), deadline: integer(data.deadline, `${path}.deadline`), ...common }; }
+  if (kind === "discard") { keys(data, ["kind", "id", "issued_at"], path); return { kind, ...common }; }
+  if (kind === "metadata") {
+    keys(data, ["kind", "id", "issued_at", "limits"], path);
+    const limits = record(data.limits, `${path}.limits`); keys(limits, ["location", "content-type", "content-encoding", "content-length"], `${path}.limits`);
+    const parsed: Record<string, number> = {};
+    for (const [name, size] of Object.entries(limits)) parsed[name] = integer(size, `${path}.limits.${name}`, true);
+    return { kind, limits: parsed, ...common };
+  }
+  keys(data, ["kind", "id", "issued_at", "deadline", "maximum", "declared_length", "token"], path);
+  return { kind, maximum: integer(data.maximum, `${path}.maximum`, true), declared_length: data.declared_length === null ? null : integer(data.declared_length, `${path}.declared_length`), deadline: integer(data.deadline, `${path}.deadline`), token: string(data.token, `${path}.token`), ...common };
+}
+
+function parseFact(value: unknown, effect: MachineEffect, path: string): MachineFact {
+  const data = record(value, path);
+  if (data.kind !== effect.kind) throw new TypeError(`${path} is not bound to its effect`);
+  if (effect.kind === "dns") {
+    keys(data, ["kind", "completed_at", "addresses", "overflow", "failure"], path);
+    if (!Array.isArray(data.addresses)) throw new TypeError(`${path}.addresses must be an array`);
+    return { kind: "dns", completed_at: integer(data.completed_at, `${path}.completed_at`), addresses: data.addresses.map((item, index) => string(item, `${path}.addresses[${index}]`)), overflow: boolean(data.overflow, `${path}.overflow`), failure: timedFailure(data.failure, `${path}.failure`) };
+  }
+  if (effect.kind === "fetch") { keys(data, ["kind", "completed_at", "failure"], path); return { kind: "fetch", completed_at: integer(data.completed_at, `${path}.completed_at`), failure: timedFailure(data.failure, `${path}.failure`) }; }
+  if (effect.kind === "discard") { keys(data, ["kind", "completed_at"], path); return { kind: "discard", completed_at: integer(data.completed_at, `${path}.completed_at`) }; }
+  if (effect.kind === "metadata") {
+    keys(data, ["kind", "completed_at", "status", "headers", "failure"], path);
+    const failure = data.failure === null ? null : literal(data.failure, ["invalid"] as const, `${path}.failure`);
+    const headers = record(data.headers, `${path}.headers`); keys(headers, failure === null ? Object.keys(effect.limits) : [], `${path}.headers`);
+    const parsed: Record<string, HeaderAtom> = {};
+    for (const [name, value] of Object.entries(headers)) {
+      const atom = record(value, `${path}.headers.${name}`); keys(atom, ["value", "overflow"], `${path}.headers.${name}`);
+      parsed[name] = { value: atom.value === null ? null : string(atom.value, `${path}.headers.${name}.value`), overflow: boolean(atom.overflow, `${path}.headers.${name}.overflow`) };
+    }
+    return { kind: "metadata", completed_at: integer(data.completed_at, `${path}.completed_at`), status: integer(data.status, `${path}.status`), headers: parsed, failure };
+  }
+  keys(data, ["kind", "completed_at", "failure", "token", "length", "digest", "valid_utf8"], path);
+  return { kind: "read", completed_at: integer(data.completed_at, `${path}.completed_at`), failure: data.failure === null ? null : literal(data.failure, ["timeout", "limit", "invalid"] as const, `${path}.failure`), token: string(data.token, `${path}.token`), length: integer(data.length, `${path}.length`), digest: string(data.digest, `${path}.digest`), valid_utf8: boolean(data.valid_utf8, `${path}.valid_utf8`) };
+}
+
 const copiedEvidence = (value: MachineEvidence): MachineEvidence => ({ ...value, redirect_chain: [...value.redirect_chain], validated_hops: value.validated_hops.map((hop) => ({ ...hop })) });
 const copy = (value: FetchMachine): FetchMachine => ({ ...value, visited: [...value.visited], evidence: copiedEvidence(value.evidence), pending: value.pending === null ? null : structuredClone(value.pending), after_discard: value.after_discard === null ? null : { ...value.after_discard }, terminal: value.terminal === null ? null : { ...value.terminal, evidence: copiedEvidence(value.terminal.evidence) } });
 const failure = (machine: FetchMachine, reason: UnscannableReason) => {
@@ -65,9 +135,10 @@ const discardThen = (machine: FetchMachine, action: AfterDiscard, at: number) =>
   machine.after_discard = action; queue(machine, { kind: "discard" }, at);
 };
 const header = (fact: Extract<MachineFact, { kind: "metadata" }>, name: string) => fact.headers[name] ?? { value: null, overflow: false };
-export function reduceFetchMachine(source: FetchMachine, fact: MachineFact): FetchMachine {
+export function reduceFetchMachine(source: FetchMachine, value: unknown): FetchMachine {
   const machine = copy(source); const effect = machine.pending;
-  if (machine.terminal !== null || effect === null || effect.kind !== fact.kind) throw new TypeError("invalid machine transition");
+  if (machine.terminal !== null || effect === null) throw new TypeError("invalid machine transition");
+  const fact = parseFact(value, parseEffect(effect, "pending effect"), "fact");
   machine.pending = null;
   if ("deadline" in effect && effect.deadline !== undefined && "completed_at" in fact && fact.completed_at > effect.deadline) {
     if (effect.kind === "fetch" || effect.kind === "read") discardThen(machine, { kind: "fail", reason: "timeout" }, fact.completed_at);
@@ -130,11 +201,12 @@ export function reduceFetchMachine(source: FetchMachine, fact: MachineFact): Fet
 
 const freeze = <T>(value: T): T => { if (typeof value === "object" && value !== null) { for (const child of Object.values(value)) freeze(child); Object.freeze(value); } return value; };
 export const journalEntry = (effect: MachineEffect, fact: MachineFact): JournalEntry => freeze(structuredClone({ effect, fact }));
-export function replayFetchMachine(rawUrl: string, limits: MachineLimits, started: number, entries: readonly JournalEntry[]): MachineResult {
+export function replayFetchMachine(rawUrl: string, limits: MachineLimits, started: number, entries: readonly unknown[]): MachineResult {
   let machine = createFetchMachine(rawUrl, limits, started);
-  for (const entry of entries) {
-    if (machine.pending === null || JSON.stringify(machine.pending) !== JSON.stringify(entry.effect)) throw new TypeError("journal effect mismatch");
-    machine = reduceFetchMachine(machine, structuredClone(entry.fact));
+  for (const raw of entries) {
+    const entry = record(raw, "journal entry"); keys(entry, ["effect", "fact"], "journal entry");
+    if (machine.pending === null || JSON.stringify(parseEffect(machine.pending, "pending effect")) !== JSON.stringify(parseEffect(entry.effect, "journal effect"))) throw new TypeError("journal effect mismatch");
+    machine = reduceFetchMachine(machine, entry.fact);
   }
   if (machine.terminal === null || machine.pending !== null) throw new TypeError("journal incomplete");
   return machine.terminal;
