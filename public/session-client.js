@@ -185,10 +185,10 @@ export class SessionClient {
       const ids = resultIds(receipt);
       let output;
       if (kind === "live_page") {
+        const envelopes = await Promise.all(ids.map((id) => this.loadResult(scope, id)));
         try { const exchange = await decodeLiveExchange({ request: payload, receipt,
-          loadResult: (id) => this.loadResult(scope, id) }); output = presentExchange(exchange); }
-        catch (error) { if (error?.name === "AbortError" || ["unauthorized", "service_unavailable", "malformed_response"].includes(error?.message)) throw error;
-          throw new Error("malformed_response"); }
+          loadResult: (id) => envelopes.find(({ result }) => result.scan_id === id) });
+          output = presentExchange(exchange); } catch { throw new Error("malformed_response"); }
       } else {
         if (receipt.mode !== kind) throw new Error("malformed_response");
         const envelopes = await Promise.all(ids.map((id) => this.loadResult(scope, id)));

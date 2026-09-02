@@ -172,7 +172,25 @@ test("a failed parallel result load drains siblings before newer authentication"
   assert.equal(client.auth.csrf, CSRF);
 });
 
-test("generated live protocol errors use the closed browser vocabulary", async () => {
+test("live result request errors retain their exact provenance", async () => {
+  const cases = [
+    ["unauthorized", () => new Response("", { status: 401 })],
+    ["invalid_request", () => Response.json({ error: "anything" }, { status: 400 })],
+    ["scan_unavailable", () => Response.json({ error: "scan_unavailable" }, { status: 503 })],
+    ["malformed_response", () => Response.json({ error: "malformed_response" }, { status: 422 })],
+    ["service_unavailable", () => Response.json({ error: "anything" }, { status: 503 })],
+  ];
+  for (const [message, result] of cases) {
+    const client = new SessionClient(async (path) => path === "/api/session" ? session()
+      : path === "/api/scans/live" ? Response.json({ scan_ids: [A] }, { status: 201 }) : result());
+    await assert.rejects(client.scanLive({ document_url: "https://example.test/reference",
+      observed_at: "2026-09-01T06:30:00.000Z", candidates: [], extraction_rejections: [] },
+    { consent: true }), (error) => error.message === message, message);
+    assert.equal(client.operations.size, 0, message);
+  }
+});
+
+test("unknown generated live errors remain malformed", async () => {
   const liveReceipt = { mode: "live_page", analyzed_at: "not-iso", scan_ids: [],
     observed_candidates: 0, accepted_targets: 0, rejected_candidates: 0,
     truncated: false, page_evidence_trust: "untrusted", targets: [], rejections: [] };
