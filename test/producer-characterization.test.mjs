@@ -32,7 +32,7 @@ test("real safe fetch preserves the bounded A to B to A redirect-loop trace", ()
     { hostname: "loop.example.co", address_count: 1 },
   ]);
   assert.deepEqual(corpus.events.fetch_requests.slice(-2), ["https://loop.example.co/a", "https://loop.example.co/b"]);
-  assert.equal(stores("redirect_loop")[0].submitted.analysis_state, "unscannable");
+  assert.equal(stores("redirect_loop")[0].stored.analysis_state, "unscannable");
 });
 
 test("real Live and Paste boundaries preserve order duplicates and truncation provenance", () => {
@@ -44,12 +44,13 @@ test("real Live and Paste boundaries preserve order duplicates and truncation pr
   assert.deepEqual(corpus.outputs.live.targets[0], { canonical_url: "https://watch.example/duplicate", occurrence_indices: [0, 1], anchor_text_variants: ["First label", "Second label"] });
   assert.deepEqual([corpus.outputs.live.observed_candidates, corpus.outputs.live.accepted_targets, corpus.outputs.live.scan_ids.length, corpus.outputs.live.truncated], [32, 31, 16, true]);
   assert.deepEqual([corpus.outputs.paste_256.accepted_targets, corpus.outputs.paste_256.scan_ids.length, corpus.outputs.paste_256.truncated], [256, 16, true]);
-  for (const operation of ["live_boundary_17", "live_boundary_32", "paste_256"]) assert.ok(stores(operation).every(({ submitted }) => submitted.limitations.at(-1).includes("bounded results were retained")), operation);
+  for (const operation of ["live_boundary_17", "live_boundary_32", "paste_256"]) assert.ok(stores(operation).every(({ stored }) => stored.limitations.at(-1).includes("bounded results were retained")), operation);
 });
 
 test("coordinator storage creates deterministic receipt/result bindings and throttle events", () => {
   assert.ok(corpus.outputs.coordinator.pairs.length > 100);
-  assert.ok(corpus.outputs.coordinator.pairs.every(({ receipt_id, result_id }) => receipt_id === result_id && /^[a-f0-9]{32}$/u.test(receipt_id)));
+  assert.ok(corpus.outputs.coordinator.pairs.every(({ receipt_id, result_id }) => /^[a-f0-9]{32}$/u.test(receipt_id) && /^[a-f0-9]{32}$/u.test(result_id)));
+  assert.ok(corpus.outputs.coordinator.pairs.filter(({ operation }) => operation.startsWith("paste") || operation === "redirect_loop").every(({ receipt_id, result_id }) => receipt_id !== result_id));
   assert.deepEqual(corpus.events.throttle.map(({ allowed }) => allowed), [true, true, true, true, true, false, true]);
   for (const operation of ["paste_url", "paste_html", "redirect_loop", "live"]) {
     const receipt = corpus.outputs[operation];

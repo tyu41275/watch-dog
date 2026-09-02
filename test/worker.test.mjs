@@ -127,6 +127,8 @@ test("authenticated paste HTML stores results while origin and CSRF stay mandato
   assert.equal(receipt.mode, "paste_html");
   assert.equal(receipt.accepted_targets, 1);
   assert.equal(receipt.scan_ids.length, 1);
+  assert.match(receipt.receipt_id, /^[a-f0-9]{32}$/);
+  assert.notEqual(receipt.receipt_id, receipt.scan_ids[0]);
 
   const stored = await worker.fetch(new Request(
     `https://watch.example/api/results/${receipt.scan_ids[0]}`,
@@ -305,7 +307,7 @@ test("session route rejects missing, tampered, expired, and rotated cookies", as
   assert.equal(wrongOrigin.status, 401);
 });
 
-test("results are opaque, session-owned, and unavailable cross-session", async () => {
+test("explicit Live results are opaque, session-owned, and unavailable cross-session", async () => {
   const { coordinator, env } = configured();
   const firstLogin = await worker.fetch(loginRequest({
     username: env.ADMIN_USERNAME,
@@ -317,7 +319,7 @@ test("results are opaque, session-owned, and unavailable cross-session", async (
 
   const result = {
     scan_id: "pending",
-    mode: "paste_url",
+    mode: "live_page",
     canonical_target: "https://example.test/",
     risk_label: "unknown",
     analysis_state: "unknown",
@@ -327,9 +329,9 @@ test("results are opaque, session-owned, and unavailable cross-session", async (
     provider_observations: [],
     limitations: ["No provider observation was available."],
   };
-  const seeded = await coordinator.fetch(new Request("https://coordinator/results", {
+  const seeded = await coordinator.fetch(new Request("https://coordinator/live-results", {
     method: "POST",
-    body: JSON.stringify({ session_id: firstClaims.sid, result }),
+    body: JSON.stringify({ version: 1, session_id: firstClaims.sid, result }),
   }));
   const { scan_id } = await seeded.json();
   assert.match(scan_id, /^[a-f0-9]{32}$/);
@@ -352,4 +354,9 @@ test("results are opaque, session-owned, and unavailable cross-session", async (
   );
   assert.equal(crossSession.status, 403);
   assert.deepEqual(await crossSession.json(), { error: "unauthorized" });
+
+  const legacy = await coordinator.fetch(new Request("https://coordinator/results", {
+    method: "POST", body: JSON.stringify({ session_id: firstClaims.sid, result }),
+  }));
+  assert.equal(legacy.status, 404);
 });
