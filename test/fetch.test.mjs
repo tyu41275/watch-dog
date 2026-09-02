@@ -4,6 +4,8 @@ import { FETCH_REJECTION_REASONS } from "../dist/shared/canonicalize.js";
 import { admitPublicHost, isPublicAddress } from "../dist/worker/fetch/address.js";
 import { PASTE_LIMITS, executePasteScan, parsePasteRequest } from "../dist/worker/fetch/paste.js";
 import { SAFE_FETCH_LIMITS, createCloudflareDohResolver, safeFetchHtml } from "../dist/worker/fetch/safe-fetch.js";
+import { replayFetchMachine } from "../dist/worker/fetch/fetch-machine.js";
+import { createResponseScope } from "../dist/worker/fetch/response-scope.js";
 const PUBLIC_ADDRESSES = ["93.184.216.34", "2606:4700:4700::1111"];
 const publicResolver = async () => PUBLIC_ADDRESSES;
 const dnsJson = (body, headers = { "content-type": "application/dns-json" }) => new Response(JSON.stringify(body), { headers });
@@ -151,6 +153,7 @@ test("response, encoding, byte, fetch, DNS, and time limits are typed", async ()
     ["length", () => new Response("x", { headers: {
       "content-type": "text/html", "content-length": String(SAFE_FETCH_LIMITS.max_response_bytes + 1),
     } }), "response_too_large"],
+    ["length mismatch", () => new Response("x", { headers: { "content-type": "text/html", "content-length": "2" } }), "invalid_response"],
     ["bytes", () => new Response(new Uint8Array(SAFE_FETCH_LIMITS.max_response_bytes + 1), {
       headers: { "content-type": "text/html" },
     }), "response_too_large"],
@@ -280,4 +283,137 @@ test("URL paste provenance is paste_url and failures produce stored typed fallba
     assert.equal(stored[0].analysis_state, "unscannable");
   }
   assert.equal(PASTE_LIMITS.max_results, 16);
+});
+
+const deferred = () => {
+  let resolve; let reject;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+};
+const cancellable = (cancel) => new Response(new ReadableStream({ pull() {}, cancel }), {
+  headers: { "content-type": "text/html" },
+});
+
+test("response scope seals pending tickets, bounds cells, and rejects forged or reused handles", async () => {
+  const pending = [deferred(), deferred()]; let calls = 0; let cancelled = 0;
+  const scope = createResponseScope(() => pending[calls++].promise, () => 0);
+  const first = scope.request("https://one.example.co/", {}, 10);
+  const second = scope.request("https://two.example.co/", {}, 10);
+  assert.equal((await scope.request("https://three.example.co/", {}, 10)).failure, "capacity");
+  const receipt = scope.seal();
+  assert.deepEqual([receipt.live_handles, receipt.pending_tickets], [0, 2]);
+  assert.equal((await first).failure, "timeout"); assert.equal((await second).failure, "timeout");
+  pending[0].resolve(cancellable(() => { cancelled += 1; return Promise.reject(new Error("observed")); }));
+  pending[1].resolve(cancellable(() => { cancelled += 1; return new Promise(() => {}); }));
+  await new Promise(setImmediate);
+  assert.equal(cancelled, 2);
+
+  const owned = createResponseScope(async () => new Response("ok", { headers: { "content-type": "text/html" } }), () => 0);
+  const acquired = await owned.request("https://owned.example.co/", {}, 10);
+  assert.equal(acquired.ok, true);
+  assert.equal(owned.metadata({}, {}).ok, false);
+  const metadata = owned.metadata(acquired.handle, { "content-type": 32 });
+  assert.equal(metadata.ok, true);
+  assert.equal(owned.metadata(acquired.handle, {}).ok, false);
+  assert.equal(owned.discard(metadata.handle), true);
+  assert.equal(owned.discard(metadata.handle), false);
+  assert.equal(owned.seal().live_handles, 0);
+  const thrown = createResponseScope(() => { throw new Error("synchronous fetch failure"); }, () => 0);
+  assert.equal((await thrown.request("https://throw.example.co/", {}, 10)).failure, "network_error"); thrown.seal();
+});
+
+test("scope completion clocks and seal order cancel once with zero unhandled rejection", async () => {
+  const unhandled = []; const onUnhandled = (reason) => unhandled.push(reason);
+  process.on("unhandledRejection", onUnhandled);
+  try {
+    for (const mode of ["throw", "reject", "never"]) {
+      let cancelled = 0;
+      const scope = createResponseScope(async () => cancellable(() => {
+        cancelled += 1;
+        if (mode === "throw") throw new Error("cancel throw");
+        return mode === "reject" ? Promise.reject(new Error("cancel reject")) : new Promise(() => {});
+      }), () => 0);
+      const acquired = await scope.request("https://read.example.co/", {}, 10);
+      const reading = scope.read(acquired.handle, 10, 10);
+      scope.seal();
+      assert.equal((await reading).failure, "timeout");
+      const direct = createResponseScope(async () => cancellable(() => {
+        cancelled += 1; if (mode === "throw") throw new Error("discard throw");
+        return mode === "reject" ? Promise.reject(new Error("discard reject")) : new Promise(() => {});
+      }), () => 0);
+      const directHandle = await direct.request("https://discard.example.co/", {}, 10);
+      assert.equal(direct.discard(directHandle.handle), true);
+      const directReceipt = direct.seal(); if (mode === "never") assert.equal(directReceipt.cancel_pending, 1);
+      assert.equal(cancelled, 2);
+    }
+    let boundaryClock = 0; let boundaryCancelled = 0; const boundary = deferred();
+    const exact = createResponseScope(() => boundary.promise, () => boundaryClock);
+    const exactRequest = exact.request("https://boundary.example.co/", {}, 10);
+    boundaryClock = 10; boundary.resolve(cancellable(() => { boundaryCancelled += 1; }));
+    assert.equal((await exactRequest).ok, true); exact.seal();
+    assert.equal(boundaryCancelled, 1);
+    let clock = 0; let lateCancelled = 0; const late = deferred();
+    const timed = createResponseScope(() => late.promise, () => clock);
+    const acquiring = timed.request("https://late.example.co/", {}, 10);
+    clock = 11; late.resolve(cancellable(() => { lateCancelled += 1; }));
+    assert.equal((await acquiring).failure, "timeout");
+    assert.equal(lateCancelled, 1);
+    assert.equal(timed.seal().live_handles, 0);
+    await new Promise(setImmediate);
+    assert.deepEqual(unhandled, []);
+  } finally { process.off("unhandledRejection", onUnhandled); }
+});
+
+test("late DoH siblings and destination fulfillment remain owned after logical settlement", async () => {
+  let cancelled = 0;
+  const doh = [deferred(), deferred()]; let dohCall = 0;
+  const dohResult = await safeFetchHtml("https://public.example.co/", {
+    operation_ms: 5, fetcher: () => doh[dohCall++].promise,
+  });
+  assert.equal(dohResult.reason, "timeout");
+  doh[0].resolve(cancellable(() => { cancelled += 1; })); doh[1].resolve(cancellable(() => { cancelled += 1; }));
+  await new Promise(setImmediate);
+  assert.equal(cancelled, 2);
+
+  const sibling = deferred(); let siblingCalls = 0;
+  const siblingResult = await safeFetchHtml("https://public.example.co/", {
+    fetcher: (url) => siblingCalls++ === 0
+      ? Promise.resolve(dnsJson({ Status: 2, TC: false })) : sibling.promise,
+  });
+  assert.equal(siblingResult.reason, "dns_failure");
+  sibling.resolve(cancellable(() => { cancelled += 1; }));
+  await new Promise(setImmediate);
+  assert.equal(cancelled, 3);
+
+  const destination = deferred();
+  const destinationResult = await safeFetchHtml("https://public.example.co/", {
+    resolver: publicResolver, operation_ms: 5, fetcher: () => destination.promise,
+  });
+  assert.equal(destinationResult.reason, "timeout");
+  destination.resolve(cancellable(() => { cancelled += 1; }));
+  await new Promise(setImmediate);
+  assert.equal(cancelled, 4);
+});
+
+test("production journal is immutable, sanitized, replayable, and all-dot admission is effect-free", async () => {
+  let effects = 0;
+  const refused = await safeFetchHtml("https://./", {
+    resolver: async () => { effects += 1; return PUBLIC_ADDRESSES; },
+    fetcher: async () => { effects += 1; throw new Error("unreachable"); },
+  });
+  assert.equal(refused.ok, false); assert.equal(effects, 0);
+  const entries = [];
+  const result = await safeFetchHtml("https://public.example.co/", {
+    now: () => 0, resolver: publicResolver,
+    fetcher: async () => new Response("safe", { headers: { "content-type": "text/html" } }),
+    record: (entry) => { entries.push(entry); assert.throws(() => { entry.fact.kind = "forged"; }, TypeError); },
+  });
+  assert.equal(result.ok, true);
+  const replayed = replayFetchMachine("https://public.example.co/", {
+    max_url_chars: SAFE_FETCH_LIMITS.max_url_chars, max_redirects: SAFE_FETCH_LIMITS.max_redirects,
+    max_response_bytes: SAFE_FETCH_LIMITS.max_response_bytes, operation_ms: SAFE_FETCH_LIMITS.per_operation_ms,
+    total_ms: SAFE_FETCH_LIMITS.total_ms,
+  }, 0, entries);
+  assert.equal(replayed.ok, true);
+  assert.equal(/response_handle|"html":|"bytes":|"body":/.test(JSON.stringify(entries)), false);
 });
