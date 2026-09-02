@@ -11,7 +11,7 @@ export type AddressAdmission =
 
 // IANA special-use registries, checked 2026-09-01. Broad entries subsume
 // narrower assignments; the conservative policy rejects every listed space.
-const SPECIAL_NAMES = [
+export const SPECIAL_NAMES = [
   "alt", "arpa", "example", "example.com", "example.net", "example.org",
   "invalid", "local", "localhost", "onion", "test", "internal",
 ];
@@ -91,7 +91,7 @@ export function isPublicAddress(value: string): boolean {
   return v6 !== null && publicIpv6(v6);
 }
 
-function literalAddress(hostname: string): string | null {
+export function literalAddress(hostname: string): string | null {
   const stripped = hostname.startsWith("[") && hostname.endsWith("]")
     ? hostname.slice(1, -1)
     : hostname;

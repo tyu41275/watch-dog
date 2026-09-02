@@ -1,8 +1,10 @@
+import type { UnscannableReason } from "../../shared/canonicalize.js";
+import { addressFamily, type AddressResolver } from "./address.js";
 import {
-  canonicalizeUrl,
-  type UnscannableReason,
-} from "../../shared/canonicalize.js";
-import { addressFamily, admitPublicHost, type AddressResolver } from "./address.js";
+  createFetchMachine, journalEntry, reduceFetchMachine,
+  type JournalEntry, type MachineFact,
+} from "./fetch-machine.js";
+import { createResponseScope, type Fetcher, type ResponseHandle } from "./response-scope.js";
 
 export const SAFE_FETCH_LIMITS = {
   max_url_chars: 2_048,
@@ -24,14 +26,13 @@ export type SafeFetchResult =
   | { ok: true; html: string; evidence: SafeFetchEvidence }
   | { ok: false; reason: UnscannableReason; evidence: SafeFetchEvidence };
 
-type Fetcher = (input: string, init?: RequestInit) => Promise<Response>;
-
 export interface SafeFetchSeams {
   fetcher?: Fetcher;
   resolver?: AddressResolver;
   now?: () => number;
   operation_ms?: number;
   total_ms?: number;
+  record?: (entry: JournalEntry) => void;
 }
 
 interface DnsJson {
@@ -40,68 +41,29 @@ interface DnsJson {
   Answer?: unknown;
 }
 
-async function cancelBody(response: Response): Promise<void> {
-  try { await response.body?.cancel(); } catch { /* best-effort release */ }
-}
-
-async function boundedBytes(
-  response: Response,
-  maximum: number,
-  signal: AbortSignal,
-): Promise<Uint8Array> {
-  const declared = response.headers.get("content-length");
-  if (declared !== null) {
-    const length = Number(declared);
-    if (!Number.isSafeInteger(length) || length < 0) {
-      await cancelBody(response); throw new TypeError("invalid body length");
-    }
-    if (length > maximum) {
-      await cancelBody(response); throw new RangeError("body limit exceeded");
-    }
-  }
-  const reader = response.body?.getReader();
-  if (reader === undefined) throw new TypeError("body unavailable");
-  const abort = () => { void reader.cancel(); };
-  signal.addEventListener("abort", abort, { once: true });
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  try {
-    if (signal.aborted) throw new DOMException("aborted", "AbortError");
-    while (true) {
-      const { done, value } = await reader.read();
-      if (signal.aborted) throw new DOMException("aborted", "AbortError");
-      if (done) break;
-      size += value.byteLength;
-      if (size > maximum) { await reader.cancel(); throw new RangeError("body limit exceeded"); }
-      chunks.push(value);
-    }
-    const bytes = new Uint8Array(size);
-    let offset = 0;
-    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
-    return bytes;
-  } finally {
-    signal.removeEventListener("abort", abort);
-    reader.releaseLock();
-  }
-}
-
 async function dnsQuery(
   hostname: string,
   type: "A" | "AAAA",
-  signal: AbortSignal,
-  fetcher: Fetcher,
+  scope: ReturnType<typeof createResponseScope>,
+  deadline: number,
 ): Promise<string[]> {
   const url = `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(hostname)}&type=${type}`;
-  const response = await fetcher(url, {
+  const acquired = await scope.request(url, {
     headers: { accept: "application/dns-json" },
     redirect: "error",
-    signal,
-  });
-  const mediaType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
-  const encoding = response.headers.get("content-encoding")?.trim().toLowerCase();
-  if (!response.ok || mediaType !== "application/dns-json" || (encoding !== undefined && encoding !== "" && encoding !== "identity")) { await cancelBody(response); throw new TypeError("dns response unavailable"); }
-  const bytes = await boundedBytes(response, SAFE_FETCH_LIMITS.max_dns_response_bytes, signal);
-  const body = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as DnsJson;
+  }, deadline);
+  if (!acquired.ok) throw new DOMException(acquired.failure, acquired.failure === "timeout" || acquired.failure === "sealed" ? "AbortError" : "NetworkError");
+  const metadata = scope.metadata(acquired.handle, { "content-type": 256, "content-encoding": 128, "content-length": 32 });
+  if (!metadata.ok) throw new TypeError("dns response unavailable");
+  const mediaType = metadata.headers["content-type"]?.value?.split(";", 1)[0]?.trim().toLowerCase();
+  const encoding = metadata.headers["content-encoding"]?.value?.trim().toLowerCase();
+  const declared = metadata.headers["content-length"];
+  const declaredSize = declared?.value === null || declared?.value === undefined ? null : Number(declared.value);
+  if (metadata.status < 200 || metadata.status >= 300 || mediaType !== "application/dns-json" || metadata.headers["content-type"]?.overflow || metadata.headers["content-encoding"]?.overflow || declared?.overflow || (declaredSize !== null && (!Number.isSafeInteger(declaredSize) || declaredSize < 0)) || (encoding !== undefined && encoding !== "" && encoding !== "identity")) { scope.discard(metadata.handle); throw new TypeError("dns response unavailable"); }
+  if (declaredSize !== null && declaredSize > SAFE_FETCH_LIMITS.max_dns_response_bytes) { scope.discard(metadata.handle); throw new RangeError("body limit exceeded"); }
+  const read = await scope.read(metadata.handle, SAFE_FETCH_LIMITS.max_dns_response_bytes, deadline);
+  if (!read.ok) throw read.failure === "limit" ? new RangeError("body limit exceeded") : new DOMException(read.failure, read.failure === "timeout" ? "AbortError" : "DataError");
+  const body = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(read.bytes)) as DnsJson;
   if (body.Status !== 0 || typeof body.TC !== "boolean" || body.TC || (body.Answer !== undefined && !Array.isArray(body.Answer))) throw new TypeError("dns response invalid");
   if (body.Answer === undefined) return [];
   if (body.Answer.length > 64) throw new TypeError("dns answer limit exceeded");
@@ -120,77 +82,45 @@ export function createCloudflareDohResolver(
   fetcher: Fetcher = (input, init) => fetch(input, init),
 ): AddressResolver {
   return async (hostname, signal) => {
-    const scope = new AbortController();
-    const abort = () => scope.abort();
+    const scope = createResponseScope(fetcher);
+    const abort = () => { scope.seal(); };
     signal.addEventListener("abort", abort, { once: true });
-    if (signal.aborted) scope.abort();
+    if (signal.aborted) scope.seal();
     try {
       const [v4, v6] = await Promise.all([
-        dnsQuery(hostname, "A", scope.signal, fetcher),
-        dnsQuery(hostname, "AAAA", scope.signal, fetcher),
+        dnsQuery(hostname, "A", scope, Number.POSITIVE_INFINITY),
+        dnsQuery(hostname, "AAAA", scope, Number.POSITIVE_INFINITY),
       ]);
+      if (v4.length + v6.length > 32) throw new TypeError("dns answer limit exceeded");
       return [...v4, ...v6];
     } finally {
       signal.removeEventListener("abort", abort);
-      scope.abort();
+      scope.seal();
     }
   };
 }
 
 export const cloudflareDohResolver = createCloudflareDohResolver();
 
-function evidence(requestedUrl: string): SafeFetchEvidence {
-  return { requested_url: requestedUrl, final_url: requestedUrl, redirect_chain: [], validated_hops: [] };
-}
-
-function failed(
-  reason: UnscannableReason,
-  value: SafeFetchEvidence,
-): SafeFetchResult {
-  return { ok: false, reason, evidence: value };
-}
-
 async function operation<T>(
   run: (signal: AbortSignal) => Promise<T>,
   timeoutMs: number,
 ): Promise<T> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await run(controller.signal);
-  } finally {
-    clearTimeout(timer);
-  }
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (runFinish: () => void) => { if (!settled) { settled = true; clearTimeout(timer); runFinish(); } };
+    let pending: Promise<T>;
+    try { pending = run(controller.signal); } catch (error) { pending = Promise.reject(error); }
+    void Promise.resolve(pending).then((value) => finish(() => resolve(value)), (error) => finish(() => reject(error)));
+    const timer = setTimeout(() => finish(() => { controller.abort(); reject(new DOMException("timeout", "AbortError")); }), timeoutMs);
+  });
 }
 
-function remaining(started: number, now: () => number, operationMs: number, totalMs: number): number {
-  return Math.min(
-    operationMs,
-    totalMs - (now() - started),
-  );
-}
-
-type BoundedHtml =
-  | { ok: true; html: string }
-  | { ok: false; reason: UnscannableReason };
-
-async function boundedHtml(response: Response, signal: AbortSignal): Promise<BoundedHtml> {
-  const encoding = response.headers.get("content-encoding")?.trim().toLowerCase();
-  if (encoding !== undefined && encoding !== "" && encoding !== "identity") {
-    await cancelBody(response);
-    return { ok: false, reason: "unsupported_content_encoding" };
-  }
-  const mediaType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
-  if (mediaType !== "text/html") {
-    await cancelBody(response); return { ok: false, reason: "unsupported_content_type" };
-  }
-  try {
-    const bytes = await boundedBytes(response, SAFE_FETCH_LIMITS.max_response_bytes, signal);
-    return { ok: true, html: new TextDecoder("utf-8", { fatal: true }).decode(bytes) };
-  } catch (error) {
-    if (signal.aborted) throw error;
-    return { ok: false, reason: error instanceof RangeError ? "response_too_large" : "invalid_response" };
-  }
+function digest(bytes: Uint8Array): string {
+  let value = 2_166_136_261;
+  for (const byte of bytes) value = Math.imul(value ^ byte, 16_777_619) >>> 0;
+  return value.toString(16).padStart(8, "0");
 }
 
 /**
@@ -203,87 +133,57 @@ export async function safeFetchHtml(
   seams: SafeFetchSeams = {},
 ): Promise<SafeFetchResult> {
   const fetcher = seams.fetcher ?? ((input, init) => fetch(input, init));
-  const resolver = seams.resolver ?? cloudflareDohResolver;
   const now = seams.now ?? Date.now;
-  const operationMs = seams.operation_ms ?? SAFE_FETCH_LIMITS.per_operation_ms;
-  const totalMs = seams.total_ms ?? SAFE_FETCH_LIMITS.total_ms;
   const started = now();
-  if (rawUrl.length > SAFE_FETCH_LIMITS.max_url_chars) {
-    return failed("url_too_long", evidence(""));
-  }
-  const initial = canonicalizeUrl(rawUrl);
-  const trace = evidence(initial.ok ? initial.target.canonical_url : "");
-  if (!initial.ok) return failed(initial.reason, trace);
-  if (initial.target.canonical_url.length > SAFE_FETCH_LIMITS.max_url_chars) {
-    return failed("url_too_long", trace);
-  }
-  let current = initial.target.canonical_url;
-  const visited = new Set<string>();
-
-  for (let redirects = 0; ; redirects += 1) {
-    if (visited.has(current)) return failed("redirect_loop", trace);
-    visited.add(current);
-    const timeout = remaining(started, now, operationMs, totalMs);
-    if (timeout <= 0) return failed("timeout", trace);
-    const parsed = new URL(current);
-    let admission;
-    try {
-      admission = await operation(
-        (signal) => admitPublicHost(parsed.hostname, resolver, signal),
-        timeout,
-      );
-    } catch {
-      return failed("timeout", trace);
-    }
-    if (!admission.ok) return failed(admission.reason, trace);
-    trace.validated_hops.push({ hostname: admission.hostname, address_count: admission.addresses.length });
-
-    let response: Response;
-    try {
-      const fetchTimeout = remaining(started, now, operationMs, totalMs);
-      if (fetchTimeout <= 0) return failed("timeout", trace);
-      response = await operation((signal) => fetcher(current, {
-        method: "GET",
-        redirect: "manual",
-        headers: { accept: "text/html", "accept-encoding": "identity" },
-        signal,
-      }), fetchTimeout);
-    } catch (error) {
-      return failed(error instanceof DOMException && error.name === "AbortError" ? "timeout" : "fetch_failed", trace);
-    }
-
-    if (response.status >= 300 && response.status < 400) {
-      await cancelBody(response);
-      const location = response.headers.get("location");
-      if (location === null || location.length > SAFE_FETCH_LIMITS.max_url_chars)
-        return failed(location === null ? "redirect_missing_location" : "url_too_long", trace);
-      if (redirects >= SAFE_FETCH_LIMITS.max_redirects) return failed("redirect_limit", trace);
-      const next = canonicalizeUrl(location, current);
-      if (!next.ok) return failed(next.reason, trace);
-      if (next.target.canonical_url.length > SAFE_FETCH_LIMITS.max_url_chars) {
-        return failed("url_too_long", trace);
+  const scope = createResponseScope(fetcher, now);
+  const limits = { max_url_chars: SAFE_FETCH_LIMITS.max_url_chars, max_redirects: SAFE_FETCH_LIMITS.max_redirects, max_response_bytes: SAFE_FETCH_LIMITS.max_response_bytes, operation_ms: seams.operation_ms ?? SAFE_FETCH_LIMITS.per_operation_ms, total_ms: seams.total_ms ?? SAFE_FETCH_LIMITS.total_ms };
+  let machine = createFetchMachine(rawUrl, limits, started);
+  let active: ResponseHandle | undefined;
+  let bound: { token: string; html: string; length: number; digest: string } | undefined;
+  try {
+    while (machine.pending !== null) {
+      const effect = machine.pending;
+      let fact: MachineFact;
+      if (effect.kind === "dns") {
+        let addresses: string[] = []; let failure: "timeout" | "network_error" | null = null;
+        try {
+          if (seams.resolver !== undefined) addresses = [...await operation((signal) => seams.resolver!(effect.hostname, signal), Math.max(0, effect.deadline! - effect.issued_at))];
+          else {
+            const values = await Promise.all([dnsQuery(effect.hostname, "A", scope, effect.deadline!), dnsQuery(effect.hostname, "AAAA", scope, effect.deadline!)]);
+            addresses = [...values[0], ...values[1]];
+          }
+        } catch (error) { failure = error instanceof DOMException && error.name === "AbortError" ? "timeout" : "network_error"; }
+        const overflow = addresses.length > 32;
+        fact = { kind: "dns", completed_at: now(), addresses: addresses.slice(0, 33), overflow, failure };
+      } else if (effect.kind === "fetch") {
+        const acquired = await scope.request(effect.url, { method: "GET", redirect: "manual", headers: { accept: "text/html", "accept-encoding": "identity" } }, effect.deadline!);
+        if (acquired.ok) active = acquired.handle;
+        fact = { kind: "fetch", completed_at: acquired.completed_at, failure: acquired.ok ? null : acquired.failure };
+      } else if (effect.kind === "metadata") {
+        const value = active === undefined ? { ok: false as const } : scope.metadata(active, effect.limits);
+        if (value.ok) active = value.handle;
+        fact = value.ok ? { kind: "metadata", completed_at: now(), status: value.status, headers: value.headers, failure: null } : { kind: "metadata", completed_at: now(), status: 0, headers: {}, failure: "invalid" };
+      } else if (effect.kind === "discard") {
+        if (active !== undefined) scope.discard(active);
+        active = undefined; fact = { kind: "discard", completed_at: now() };
+      } else {
+        const value = active === undefined ? { ok: false as const, failure: "invalid" as const, completed_at: now() } : await scope.read(active, effect.maximum, effect.deadline!);
+        active = undefined;
+        let html = ""; let valid = value.ok;
+        if (value.ok) { try { html = new TextDecoder("utf-8", { fatal: true }).decode(value.bytes); } catch { valid = false; } }
+        const bodyDigest = value.ok ? digest(value.bytes) : "";
+        if (value.ok && valid) bound = { token: effect.token, html, length: value.bytes.byteLength, digest: bodyDigest };
+        fact = { kind: "read", completed_at: value.completed_at, failure: value.ok ? null : value.failure, token: effect.token, length: value.ok ? value.bytes.byteLength : 0, digest: bodyDigest, valid_utf8: valid };
       }
-      trace.redirect_chain.push(next.target.canonical_url);
-      current = next.target.canonical_url;
-      trace.final_url = current;
-      continue;
+      const entry = journalEntry(effect, fact);
+      seams.record?.(entry);
+      machine = reduceFetchMachine(machine, fact);
     }
-    if (response.status < 200 || response.status >= 300) {
-      await cancelBody(response);
-      return failed("invalid_response", trace);
-    }
-    const bodyTimeout = remaining(started, now, operationMs, totalMs);
-    if (bodyTimeout <= 0) {
-      await cancelBody(response); return failed("timeout", trace);
-    }
-    let bounded: BoundedHtml;
-    try {
-      bounded = await operation((signal) => boundedHtml(response, signal), bodyTimeout);
-    } catch {
-      return failed("timeout", trace);
-    }
-    return bounded.ok
-      ? { ok: true, html: bounded.html, evidence: { ...trace, final_url: current } }
-      : failed(bounded.reason, trace);
+    const result = machine.terminal!;
+    if (!result.ok) return result;
+    if (bound === undefined || bound.token !== result.token || bound.length !== result.length || bound.digest !== result.digest) throw new TypeError("body binding mismatch");
+    return { ok: true, html: bound.html, evidence: result.evidence };
+  } finally {
+    scope.seal();
   }
 }
