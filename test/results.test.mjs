@@ -21,13 +21,15 @@ const request = {
   extraction_rejections: [],
 };
 
-async function fixture() {
+async function fixture({ input = request, now = NOW, ids = [], provider } = {}) {
   const values = new Map();
   let serial = 0;
-  const receipt = await executeLiveScan(request, {
-    now: () => new Date(NOW),
+  const receipt = await executeLiveScan(input, {
+    now: () => new Date(now),
+    provider,
     store: async (result) => {
-      const id = (++serial).toString(16).padStart(32, "0");
+      const id = ids[serial] ?? (serial + 1).toString(16).padStart(32, "0");
+      serial += 1;
       values.set(id, { ...result, scan_id: id });
       return id;
     },
@@ -35,6 +37,36 @@ async function fixture() {
   const loadResult = async (id) => ({ status: "ok", result: structuredClone(values.get(id)) });
   return { receipt, values, loadResult };
 }
+
+test("browser replays the server analysis clock for stale provider evidence", async () => {
+  const observedAt = "2026-09-01T06:25:00.000Z";
+  const input = structuredClone(request);
+  input.observed_at = observedAt;
+  for (const candidate of input.candidates) candidate.provenance.extracted_at = observedAt;
+  const { receipt, loadResult } = await fixture({
+    input,
+    provider: {
+      provider: "google_safe_browsing",
+      source: "live",
+      observe: async ({ canonical_target }) => ({
+        provider: "google_safe_browsing", source: "live", queried_target: canonical_target,
+        observed_at: "2026-09-01T05:30:00.000Z",
+        expires_at: "2026-09-01T06:00:00.000Z", freshness: "stale",
+        state: "no_match", category: null, confidence: "high", reference: null, error: null,
+      }),
+    },
+  });
+  const exchange = await decodeLiveExchange({ request: input, receipt, loadResult });
+  assert.equal(exchange.entries[0].result.provider_observations[0].observed_at,
+    "2026-09-01T05:30:00.000Z");
+  assert.equal(exchange.entries[0].result.provider_observations[0].freshness, "stale");
+});
+
+test("browser chooses a bounded collision-free synthetic receipt ID", async () => {
+  const { receipt, loadResult } = await fixture({ ids: ["f".repeat(32), "e".repeat(32)] });
+  const exchange = await decodeLiveExchange({ request, receipt, loadResult });
+  assert.deepEqual(exchange.receipt.scan_ids, receipt.scan_ids);
+});
 
 test("browser consumes the generated reducer and retains duplicate occurrence evidence", async () => {
   const { receipt, loadResult } = await fixture();

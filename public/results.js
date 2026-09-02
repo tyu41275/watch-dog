@@ -79,9 +79,11 @@ export async function decodeLiveExchange({ request, receipt, loadResult }) {
     }
   }
   const results = loaded.map(({ result }) => result);
-  const first = results.find((result) => Array.isArray(result?.provider_observations) &&
-    result.provider_observations.length > 0);
-  const analyzedAt = first?.provider_observations[0]?.observed_at ?? request.observed_at;
+  const analyzedAt = results.flatMap((result) => result?.provider_observations ?? [])
+    .reduce((latest, observation) => observation?.freshness === "stale" &&
+      typeof observation.expires_at === "string" &&
+      Date.parse(observation.expires_at) > Date.parse(latest)
+      ? observation.expires_at : latest, request.observed_at);
   const input = { version: 1, kind: "live_page", analyzed_at: analyzedAt,
     base_url: request.document_url, document_url: request.document_url };
   let machine = createScanMachine(input);
@@ -103,8 +105,9 @@ export async function decodeLiveExchange({ request, receipt, loadResult }) {
   }
   effect = machine.pending;
   if (effect?.kind !== "ALLOCATE_IDS") throw new TypeError("malformed_response");
-  let receiptId = "f".repeat(32);
-  if (receipt.scan_ids.includes(receiptId)) receiptId = "e".repeat(32);
+  const receiptId = Array.from({ length: SCAN_LIMITS.results + 1 }, (_, index) =>
+    index.toString(16).padStart(32, "0")).find((id) => !receipt.scan_ids.includes(id));
+  if (receiptId === undefined) throw new TypeError("malformed_response");
   entry = scanJournalEntry(effect, { kind: "IDS_ALLOCATED", effect_id: effect.id,
     ids: [receiptId, ...receipt.scan_ids] });
   machine = reduceScanMachine(machine, entry.fact);
