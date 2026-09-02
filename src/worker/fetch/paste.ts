@@ -1,20 +1,7 @@
-import { aggregateAnalysis } from "../../shared/analysis.js";
-import { collectLinkCandidates } from "../../shared/candidates.js";
-import {
-  canonicalizeUrl,
-  type UnscannableReason,
-} from "../../shared/canonicalize.js";
-import type { ScanMode, ScanResult } from "../../shared/contracts.js";
-import {
-  HTML_EXTRACTION_LIMITS,
-  extractHtmlLinkCandidates,
-} from "../../shared/extract-html.js";
-import {
-  SAFE_FETCH_LIMITS,
-  safeFetchHtml,
-  type SafeFetchEvidence,
-  type SafeFetchSeams,
-} from "./safe-fetch.js";
+import { extractHtmlScanAtoms } from "../../shared/extract-html.js";
+import { createScanMachine, reduceScanMachine, scanJournalEntry, type ProviderPrimitive, type ScanInput, type ScanJournalEntry } from "../../shared/scan-machine.js";
+import type { JournalEntry } from "./fetch-machine.js";
+import { SAFE_FETCH_LIMITS, safeFetchHtml, type SafeFetchSeams } from "./safe-fetch.js";
 import type { ProviderAdapter } from "../providers/types.js";
 
 export const PASTE_LIMITS = {
@@ -26,21 +13,12 @@ export type PasteRequest =
   | { mode: "url"; url: string }
   | { mode: "html"; html: string; base_url: string };
 
-export interface PasteReceipt {
-  mode: ScanMode;
-  scan_ids: string[];
-  accepted_targets: number;
-  rejected_candidates: number;
-  truncated: boolean;
-  unscannable_reason: UnscannableReason | null;
-  fetch_evidence: SafeFetchEvidence | null;
-}
-
+export interface PasteOperation { version: 1; input: ScanInput; journal: readonly ScanJournalEntry[] }
 export interface PasteDependencies {
-  store(result: ScanResult): Promise<string>;
   provider?: ProviderAdapter;
   fetch_seams?: SafeFetchSeams;
   now?: () => Date;
+  signal?: AbortSignal;
 }
 
 function exactKeys(value: Record<string, unknown>, expected: string[]): boolean {
@@ -65,141 +43,75 @@ export function parsePasteRequest(value: unknown): PasteRequest | null {
   return null;
 }
 
-function unavailable(mode: ScanMode, reason: UnscannableReason, analyzedAt: string): ScanResult {
-  return aggregateAnalysis({
-    scan_id: "pending",
-    mode,
-    analyzed_at: analyzedAt,
-    target: null,
-    unscannable_reason: reason,
-  });
+function cancelled(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new DOMException("scan cancelled", "AbortError");
 }
 
-async function storeAll(
-  results: ScanResult[],
-  dependencies: PasteDependencies,
-): Promise<string[]> {
-  const ids: string[] = [];
-  for (const result of results) ids.push(await dependencies.store(result));
-  return ids;
+function primitive(observation: Awaited<ReturnType<ProviderAdapter["observe"]>>): ProviderPrimitive {
+  return { provider: observation.provider, source: observation.source,
+    queried_target: observation.queried_target, observed_at: observation.observed_at,
+    expires_at: observation.expires_at, state: observation.state, category: observation.category,
+    reference: observation.reference, error: observation.error };
 }
+const freeze = <T>(value: T): T => { if (typeof value === "object" && value !== null) { for (const child of Object.values(value)) freeze(child); Object.freeze(value); } return value; };
 
 export async function executePasteScan(
   request: PasteRequest,
-  dependencies: PasteDependencies,
-): Promise<PasteReceipt> {
-  const analyzedAt = (dependencies.now ?? (() => new Date()))().toISOString();
-  const mode: ScanMode = request.mode === "url" ? "paste_url" : "paste_html";
-  let html: string;
-  let baseUrl: string;
-  let fetchEvidence: SafeFetchEvidence | null = null;
-
-  if (request.mode === "url") {
-    const fetched = await safeFetchHtml(request.url, dependencies.fetch_seams);
-    fetchEvidence = fetched.evidence;
-    if (!fetched.ok) {
-      return {
-        mode,
-        scan_ids: await storeAll([unavailable(mode, fetched.reason, analyzedAt)], dependencies),
-        accepted_targets: 0,
-        rejected_candidates: 0,
-        truncated: false,
-        unscannable_reason: fetched.reason,
-        fetch_evidence: fetchEvidence,
-      };
-    }
-    html = fetched.html;
-    baseUrl = fetched.evidence.final_url;
+  dependencies: PasteDependencies = {},
+): Promise<PasteOperation> {
+  cancelled(dependencies.signal); const analyzedAt = (dependencies.now ?? (() => new Date()))().toISOString();
+  let input: ScanInput, fetchedHtml: string | undefined;
+  if (request.mode === "html") {
+    input = { version: 1, kind: "paste_html", analyzed_at: analyzedAt,
+      base_url: request.base_url, html: request.html };
   } else {
-    if (request.html.length > HTML_EXTRACTION_LIMITS.max_input_chars) {
-      const reason = "input_too_large" as const;
-      return {
-        mode,
-        scan_ids: await storeAll([unavailable(mode, reason, analyzedAt)], dependencies),
-        accepted_targets: 0,
-        rejected_candidates: 0,
-        truncated: false,
-        unscannable_reason: reason,
-        fetch_evidence: null,
-      };
-    }
-    const base = request.base_url.length <= SAFE_FETCH_LIMITS.max_url_chars
-      ? canonicalizeUrl(request.base_url) : null;
-    if (base === null || !base.ok || base.target.canonical_url.length > SAFE_FETCH_LIMITS.max_url_chars) {
-      const reason: UnscannableReason = base === null || base.ok ? "url_too_long" : base.reason;
-      return {
-        mode,
-        scan_ids: await storeAll([unavailable(mode, reason, analyzedAt)], dependencies),
-        accepted_targets: 0,
-        rejected_candidates: 0,
-        truncated: false,
-        unscannable_reason: reason,
-        fetch_evidence: null,
-      };
-    }
-    html = request.html;
-    baseUrl = base.target.canonical_url;
+    const fetchJournal: JournalEntry[] = [];
+    const seams = dependencies.fetch_seams ?? {};
+    const clock = seams.now ?? Date.now;
+    let started: number | undefined;
+    const fetched = await safeFetchHtml(request.url, { ...seams,
+      now: () => { const value = clock(); started ??= value; return value; },
+      record: (entry) => { fetchJournal.push(entry); seams.record?.(entry); },
+    });
+    cancelled(dependencies.signal);
+    if (started === undefined) throw new TypeError("fetch did not start");
+    input = { version: 1, kind: "paste_url", analyzed_at: analyzedAt, request_url: request.url,
+      fetch: { started, limits: { max_url_chars: SAFE_FETCH_LIMITS.max_url_chars,
+        max_redirects: SAFE_FETCH_LIMITS.max_redirects,
+        max_response_bytes: SAFE_FETCH_LIMITS.max_response_bytes,
+        operation_ms: seams.operation_ms ?? SAFE_FETCH_LIMITS.per_operation_ms,
+        total_ms: seams.total_ms ?? SAFE_FETCH_LIMITS.total_ms }, journal: fetchJournal } };
+    if (fetched.ok) fetchedHtml = fetched.html;
   }
 
-  let candidates = extractHtmlLinkCandidates(html, {
-    base_url: baseUrl,
-    document_url: baseUrl,
-    extracted_at: analyzedAt,
-  });
-  if (mode === "paste_url") {
-    candidates = candidates.map((candidate) => ({
-      ...candidate,
-      provenance: { ...candidate.provenance, source: "paste_url" },
-    }));
+  let machine = createScanMachine(input);
+  const journal: ScanJournalEntry[] = [];
+  while (machine.pending?.kind !== "ALLOCATE_IDS") {
+    cancelled(dependencies.signal);
+    const effect = machine.pending;
+    if (effect === null) throw new TypeError("scan ended before allocation");
+    let fact;
+    if (effect.kind === "EXTRACT_HTML") {
+      const html = effect.body.kind === "inline_html" ? effect.body.html : fetchedHtml;
+      if (html === undefined) throw new TypeError("fetch body binding mismatch");
+      fact = { kind: "EXTRACTED" as const, effect_id: effect.id, atoms: extractHtmlScanAtoms(html) };
+    } else {
+      const observation = dependencies.provider === undefined
+        ? { provider: "google_safe_browsing", source: "live", queried_target: effect.canonical_target,
+            observed_at: effect.requested_at, expires_at: null, state: "not_configured", category: null,
+            reference: null, error: "not_configured" } as const
+        : primitive(await dependencies.provider.observe({ canonical_target: effect.canonical_target,
+            requested_at: effect.requested_at }));
+      cancelled(dependencies.signal);
+      fact = { kind: "PROVIDER_OBSERVED" as const, effect_id: effect.id, observation };
+    }
+    const entry = scanJournalEntry(effect, fact);
+    journal.push(entry);
+    machine = reduceScanMachine(machine, entry.fact);
   }
-  const collection = collectLinkCandidates(candidates);
-  const targets = collection.targets.filter(
-    (target) => target.canonical_url.length <= SAFE_FETCH_LIMITS.max_url_chars,
-  );
-  const oversizedTargets = collection.targets.length - targets.length;
-  const rejectionReasons: UnscannableReason[] = [
-    ...collection.rejected.map(({ reason }) => reason),
-    ...Array<UnscannableReason>(oversizedTargets).fill("url_too_long"),
-  ];
-  let onlyReason: UnscannableReason | null = targets.length === 0 && rejectionReasons.length === 1
-    ? (rejectionReasons[0] ?? null) : null;
-  const retainedTargets = targets.slice(0, PASTE_LIMITS.max_results);
-  const results = await Promise.all(retainedTargets.map(async (target): Promise<ScanResult> => {
-    const providerObservations = dependencies.provider === undefined ? undefined : [
-      await dependencies.provider.observe({
-        canonical_target: target.canonical_url,
-        requested_at: analyzedAt,
-      }),
-    ];
-    return aggregateAnalysis({
-      scan_id: "pending",
-      mode,
-      analyzed_at: analyzedAt,
-      target,
-      ...(providerObservations === undefined ? {} : {
-        provider_observations: providerObservations,
-      }),
-    });
-  }));
-  results.push(...rejectionReasons.map((reason) => unavailable(mode, reason, analyzedAt)));
-  if (results.length === 0) {
-    onlyReason = "no_candidates";
-    results.push(unavailable(mode, onlyReason, analyzedAt));
+  cancelled(dependencies.signal);
+  if (machine.phase !== "AWAIT_IDS" || machine.pending.count < 2) {
+    throw new TypeError("scan prefix is not ready for allocation");
   }
-  const truncated = targets.length + rejectionReasons.length > PASTE_LIMITS.max_results;
-  const retained = results.slice(0, PASTE_LIMITS.max_results);
-  if (truncated) {
-    for (const result of retained) result.limitations.push(
-      `Only the first ${PASTE_LIMITS.max_results} bounded results were retained.`,
-    );
-  }
-  return {
-    mode,
-    scan_ids: await storeAll(retained, dependencies),
-    accepted_targets: targets.length,
-    rejected_candidates: rejectionReasons.length,
-    truncated,
-    unscannable_reason: onlyReason,
-    fetch_evidence: fetchEvidence,
-  };
+  return freeze(structuredClone({ version: 1 as const, input, journal }));
 }

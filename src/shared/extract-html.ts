@@ -1,6 +1,7 @@
 import { defaultTreeAdapter, parseFragment, type DefaultTreeAdapterMap } from "parse5";
 
 import type { ExtractedLinkCandidate } from "./contracts.js";
+import type { ExtractAtom } from "./scan-machine.js";
 
 export const HTML_EXTRACTION_LIMITS = {
   max_input_chars: 200_000,
@@ -38,65 +39,55 @@ function pushChildren(node: Node, stack: Node[]): void {
   }
 }
 
-function normalizedAnchorText(element: Element): string {
-  const parts: string[] = [];
+function anchorText(element: Element): { text: string; overflow: boolean } { let text = "", separating = false;
   const stack: Node[] = [];
-  let length = 0;
   pushChildren(element, stack);
-  while (stack.length > 0 && length < HTML_EXTRACTION_LIMITS.max_anchor_text_chars) {
+  while (stack.length > 0) {
     const node = stack.pop();
     if (node === undefined) break;
     if (defaultTreeAdapter.isTextNode(node)) {
-      const value = node.value.slice(
-        0,
-        HTML_EXTRACTION_LIMITS.max_anchor_text_chars - length,
-      );
-      parts.push(value);
-      length += value.length;
-    } else if (!(isElement(node) && EXCLUDED_CONTENT.has(node.tagName))) {
-      pushChildren(node, stack);
-    }
+      for (const character of node.value) {
+        if (/\s/u.test(character)) { if (text.length > 0) separating = true; continue; }
+        if (separating && text.length < HTML_EXTRACTION_LIMITS.max_anchor_text_chars) text += " ";
+        if (text.length + character.length > HTML_EXTRACTION_LIMITS.max_anchor_text_chars) return { text, overflow: true };
+        text += character; separating = false;
+      }
+    } else if (!(isElement(node) && EXCLUDED_CONTENT.has(node.tagName))) pushChildren(node, stack);
   }
-  return parts.join("").replace(/\s+/g, " ").trim();
+  return { text, overflow: false };
 }
 
-/**
- * Parse bounded pasted text as an inert HTML fragment. parse5 implements the
- * HTML tokenizer/tree builder without a live DOM, script execution, fetching,
- * rendering, or subresource loading. Only anchor hrefs and bounded text are
- * read; document-controlled base elements are ignored.
- */
-export function extractHtmlLinkCandidates(
-  input: string,
-  context: HtmlExtractionContext,
-): ExtractedLinkCandidate[] {
-  const fragment = parseFragment(input.slice(0, HTML_EXTRACTION_LIMITS.max_input_chars));
-  const candidates: ExtractedLinkCandidate[] = [];
-  const stack: Node[] = [fragment];
-
-  while (stack.length > 0 && candidates.length < HTML_EXTRACTION_LIMITS.max_candidates) {
+export function extractHtmlScanAtoms(input: string): ExtractAtom[] {
+  const fragment = parseFragment(input.slice(0, HTML_EXTRACTION_LIMITS.max_input_chars)), atoms: ExtractAtom[] = [], stack: Node[] = [fragment];
+  while (stack.length > 0) {
     const node = stack.pop();
     if (node === undefined) break;
     if (isElement(node)) {
       if (EXCLUDED_CONTENT.has(node.tagName)) continue;
       if (node.tagName === "a") {
-        const href = node.attrs.find((attribute) => attribute.name === "href")?.value;
-        if (href !== undefined && href.length <= HTML_EXTRACTION_LIMITS.max_href_chars) {
-          candidates.push({
-            raw_href: href,
-            anchor_text: normalizedAnchorText(node),
-            base_url: context.base_url,
-            provenance: {
-              source: "paste_html",
-              document_url: context.document_url,
-              occurrence_index: candidates.length,
-              extracted_at: context.extracted_at,
-            },
-          });
+        const href = node.attrs.find(({ name }) => name === "href")?.value;
+        if (href !== undefined) {
+          if (atoms.length === HTML_EXTRACTION_LIMITS.max_candidates) {
+            atoms.push({ kind: "OCCURRENCE_OVERFLOW" }); break;
+          }
+          const bounded = href.length <= HTML_EXTRACTION_LIMITS.max_href_chars, label = anchorText(node);
+          atoms.push({ kind: "ANCHOR", href: bounded ? href : null, href_overflow: !bounded,
+            text: label.text, text_overflow: label.overflow });
         }
       }
     }
     pushChildren(node, stack);
+  }
+  return atoms;
+}
+
+export function extractHtmlLinkCandidates(input: string, context: HtmlExtractionContext): ExtractedLinkCandidate[] {
+  const candidates: ExtractedLinkCandidate[] = [];
+  for (const atom of extractHtmlScanAtoms(input)) {
+    if (atom.kind !== "ANCHOR" || atom.href === null) continue;
+    candidates.push({ raw_href: atom.href, anchor_text: atom.text, base_url: context.base_url,
+      provenance: { source: "paste_html", document_url: context.document_url,
+        occurrence_index: candidates.length, extracted_at: context.extracted_at } });
   }
   return candidates;
 }

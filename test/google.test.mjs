@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { parseProviderObservation } from "../dist/shared/contracts.js";
 import { executePasteScan } from "../dist/worker/fetch/paste.js";
+import { CoordinatorCore } from "../dist/worker/coordinator.js";
 import { executeLiveScan } from "../dist/worker/live.js";
 import {
   GOOGLE_SAFE_BROWSING,
@@ -278,6 +279,12 @@ function liveObservation(providerRequest) {
   };
 }
 
+function commitPaste(operation) {
+  const core = new CoordinatorCore();
+  const receipt = core.commitPaste("s".repeat(32), operation.input, operation.journal, 0);
+  return { receipt, stored: receipt.scan_ids.map((id) => core.getResult("s".repeat(32), id, 0).result) };
+}
+
 test("Paste and Live inject the same normalized adapter only for accepted targets", async () => {
   const calls = [];
   const provider = Object.freeze({
@@ -288,19 +295,15 @@ test("Paste and Live inject the same normalized adapter only for accepted target
       return liveObservation(providerRequest);
     },
   });
-  const pasteStored = [];
-  const paste = await executePasteScan({
+  const operation = await executePasteScan({
     mode: "html",
     html: '<a href="./one">One</a><a href="mailto:no@example.test">No</a>',
     base_url: "https://example.test/base/",
   }, {
     now: () => new Date(requestedAt),
     provider,
-    store: async (result) => {
-      pasteStored.push(result);
-      return String(pasteStored.length).padStart(32, "0");
-    },
   });
+  const { receipt: paste, stored: pasteStored } = commitPaste(operation);
   assert.equal(paste.accepted_targets, 1);
   assert.equal(paste.rejected_candidates, 1);
   assert.deepEqual(calls[0], {
@@ -347,7 +350,7 @@ test("Paste and Live inject the same normalized adapter only for accepted target
     mode: "html",
     html: '<a href="mailto:no@example.test">No</a>',
     base_url: "https://example.test/",
-  }, { now: () => new Date(requestedAt), provider, store: async () => "f".repeat(32) });
+  }, { now: () => new Date(requestedAt), provider });
   await executeLiveScan({
     document_url: "https://watch.example/reference",
     observed_at: requestedAt,
@@ -357,7 +360,7 @@ test("Paste and Live inject the same normalized adapter only for accepted target
   assert.equal(calls.length, beforeRejected);
 });
 
-test("provider work is concurrent and capped to the retained result budget", async () => {
+test("Paste provider effects are serialized while Live retains its bounded concurrency", async () => {
   for (const mode of ["paste", "live"]) {
     let active = 0;
     let maximum = 0;
@@ -375,8 +378,7 @@ test("provider work is concurrent and capped to the retained result budget", asy
         return liveObservation(providerRequest);
       } });
     const urls = Array.from({ length: 20 }, (_, index) => `https://target-${index}.example/`);
-    const dependencies = { now: () => new Date(requestedAt), provider,
-      store: async (result) => { stored.push(result.canonical_target); return "d".repeat(32); } };
+    const dependencies = { now: () => new Date(requestedAt), provider };
     const pending = mode === "paste"
       ? executePasteScan({ mode: "html", html: urls.map((url) => `<a href="${url}">x</a>`).join(""),
         base_url: canonicalTarget }, dependencies)
@@ -384,15 +386,19 @@ test("provider work is concurrent and capped to the retained result budget", asy
         candidates: urls.map((url, occurrence_index) => ({ raw_href: url, anchor_text: "x",
           base_url: canonicalTarget, provenance: { source: "live_page",
             document_url: canonicalTarget, occurrence_index, extracted_at: requestedAt } })),
-        extraction_rejections: [] }, dependencies);
+        extraction_rejections: [] }, { ...dependencies,
+          store: async (result) => { stored.push(result.canonical_target); return "d".repeat(32); } });
     await new Promise((resolve) => setTimeout(resolve, 0));
-    assert.equal(calls.length, 16, mode);
-    assert.equal(maximum, 16, mode);
+    assert.equal(calls.length, mode === "paste" ? 1 : 16, mode);
+    assert.equal(maximum, mode === "paste" ? 1 : 16, mode);
     release();
-    const receipt = await pending;
+    const produced = await pending;
+    const { receipt, stored: pasteStored = stored } = mode === "paste"
+      ? commitPaste(produced) : { receipt: produced };
     assert.equal(receipt.accepted_targets, 20, mode);
     assert.equal(receipt.scan_ids.length, 16, mode);
     assert.equal(receipt.truncated, true, mode);
-    assert.deepEqual(stored, calls, mode);
+    assert.deepEqual(mode === "paste" ? pasteStored.map((result) => result.canonical_target) : stored,
+      calls, mode);
   }
 });

@@ -6,9 +6,16 @@ import { PASTE_LIMITS, executePasteScan, parsePasteRequest } from "../dist/worke
 import { SAFE_FETCH_LIMITS, createCloudflareDohResolver, safeFetchHtml } from "../dist/worker/fetch/safe-fetch.js";
 import { replayFetchMachine } from "../dist/worker/fetch/fetch-machine.js";
 import { createResponseScope } from "../dist/worker/fetch/response-scope.js";
+import { CoordinatorCore } from "../dist/worker/coordinator.js";
+import { extractHtmlScanAtoms } from "../dist/shared/extract-html.js";
 const PUBLIC_ADDRESSES = ["93.184.216.34", "2606:4700:4700::1111"];
 const publicResolver = async () => PUBLIC_ADDRESSES;
 const dnsJson = (body, headers = { "content-type": "application/dns-json" }) => new Response(JSON.stringify(body), { headers });
+const commit = (operation) => {
+  const core = new CoordinatorCore();
+  const receipt = core.commitPaste("s".repeat(32), operation.input, operation.journal, 0);
+  return { receipt, results: receipt.scan_ids.map((id) => core.getResult("s".repeat(32), id, 0).result) };
+};
 test("address admission rejects every special family and mixed DNS before fetch", async () => {
   const cases = [
     ["8.8.8.8", true], ["93.184.216.34", true], ["0.0.0.0", false],
@@ -226,32 +233,31 @@ test("paste input is closed and local HTML stays inert on the shared pipeline", 
   });
   assert.equal(parsePasteRequest({ mode: "url", url: "https://public.example.co/", extra: true }), null);
   assert.equal(parsePasteRequest({ mode: "html", html: "x" }), null);
-  const stored = [];
   let fetched = false;
-  const receipt = await executePasteScan({
+  const operation = await executePasteScan({
     mode: "html",
     base_url: "https://source.example/dir/page",
     html: '<script>throw 1</script><img src="https://never.invalid/x"><a href="../one">one</a><a href="mailto:x@y">mail</a>',
   }, {
     now: () => new Date("2026-09-01T03:00:00Z"),
     fetch_seams: { fetcher: async () => { fetched = true; throw new Error("unexpected"); } },
-    store: async (result) => { stored.push(structuredClone(result)); return String(stored.length).padStart(32, "0"); },
   });
+  const { receipt, results: stored } = commit(operation);
   assert.equal(fetched, false);
+  assert.deepEqual(Object.keys(operation).sort(), ["input", "journal", "version"]);
+  assert.ok(operation.journal.every(({ effect }) => effect.kind !== "ALLOCATE_IDS"));
+  assert.ok(Object.isFrozen(operation.input) && Object.isFrozen(operation.journal));
   assert.equal(receipt.mode, "paste_html");
   assert.equal(receipt.accepted_targets, 1);
   assert.equal(receipt.rejected_candidates, 1);
   assert.equal(stored[0].canonical_target, "https://source.example/one");
-  assert.equal(stored[0].analysis_state, "unknown");
+  assert.equal(stored[0].analysis_state, "provider_error");
   assert.equal(stored[1].analysis_state, "unscannable");
   assert.match(stored[1].limitations[0], /unsupported_scheme/);
 });
 test("URL paste provenance is paste_url and failures produce stored typed fallback", async () => {
-  const stored = [];
-  const store = async (result) => { stored.push(structuredClone(result)); return "a".repeat(32); };
-  const success = await executePasteScan({ mode: "url", url: "https://public.example.co/page" }, {
+  const successOperation = await executePasteScan({ mode: "url", url: "https://public.example.co/page" }, {
     now: () => new Date("2026-09-01T03:00:00Z"),
-    store,
     fetch_seams: {
       resolver: publicResolver,
       fetcher: async () => new Response(
@@ -260,29 +266,59 @@ test("URL paste provenance is paste_url and failures produce stored typed fallba
       ),
     },
   });
+  const { receipt: success, results: stored } = commit(successOperation);
   assert.equal(success.accepted_targets, 1);
   assert.equal(stored[0].mode, "paste_url");
   assert.equal(stored[0].supporting_evidence[0].source, "candidate:paste_url");
-  stored.length = 0;
-  const denied = await executePasteScan({ mode: "url", url: "http://127.0.0.1/" }, { store });
+  const deniedOperation = await executePasteScan({ mode: "url", url: "http://127.0.0.1/" });
+  const { receipt: denied, results: deniedResults } = commit(deniedOperation);
   assert.equal(denied.unscannable_reason, "unsafe_address");
-  assert.equal(stored[0].analysis_state, "unscannable");
+  assert.equal(deniedResults[0].analysis_state, "unscannable");
   assert.equal(denied.fetch_evidence.requested_url, "http://127.0.0.1/");
-  const oversized = await executePasteScan({
+  const oversizedOperation = await executePasteScan({
     mode: "html", base_url: "https://source.example/", html: "x".repeat(200_001),
-  }, { store });
+  });
+  const { receipt: oversized } = commit(oversizedOperation);
   assert.equal(oversized.unscannable_reason, "input_too_large");
   for (const input of [
     { mode: "html", base_url: `https://source.example/${"b".repeat(2_040)}/`, html: '<a href="relative">x</a>' },
     { mode: "html", base_url: "https://source.example/", html: `<a href="${"r".repeat(2_048)}">x</a>` },
   ]) {
-    stored.length = 0;
-    const bounded = await executePasteScan(input, { store });
+    const boundedOperation = await executePasteScan(input);
+    const { receipt: bounded, results } = commit(boundedOperation);
     assert.equal(bounded.unscannable_reason, "url_too_long");
     assert.equal(bounded.accepted_targets, 0);
-    assert.equal(stored[0].analysis_state, "unscannable");
+    assert.equal(results[0].analysis_state, "unscannable");
   }
   assert.equal(PASTE_LIMITS.max_results, 16);
+});
+
+test("actual Paste extraction emits exact overflow primitives without late bytes", () => {
+  const anchors = (count) => Array.from({ length: count }, (_, index) =>
+    `<a href="/item-${index}">${index}</a>`).join("");
+  assert.equal(extractHtmlScanAtoms(anchors(255)).length, 255);
+  assert.equal(extractHtmlScanAtoms(anchors(256)).length, 256);
+  const overflow = extractHtmlScanAtoms(`${anchors(256)}<a href="/late-value">late</a>`);
+  assert.deepEqual(overflow.at(-1), { kind: "OCCURRENCE_OVERFLOW" });
+  assert.equal(JSON.stringify(overflow).includes("late-value"), false);
+  const [href, exact, text, trailing, separated, missing] = extractHtmlScanAtoms(`<a href="${"h".repeat(2049)}">x</a><a href="/exact">${"x".repeat(512)}   </a><a href="/text">${"x".repeat(512)} y</a><a href="/trailing">${"x".repeat(511)}   </a><a href="/separated">${"x".repeat(511)}   y</a><a>missing</a>`);
+  assert.deepEqual([href.href, href.href_overflow], [null, true]);
+  assert.deepEqual([exact.text.length, exact.text_overflow], [512, false]);
+  assert.deepEqual([text.text.length, text.text_overflow], [512, true]); assert.deepEqual([trailing.text, trailing.text_overflow], ["x".repeat(511), false]);
+  assert.equal(missing, undefined); assert.deepEqual([separated.text, separated.text_overflow], [`${"x".repeat(511)} `, true]);
+});
+test("Paste cancellation cannot produce a coordinator-ready prefix", async () => {
+  const before = new AbortController(); before.abort();
+  await assert.rejects(executePasteScan({ mode: "html", base_url: "https://source.example/",
+    html: '<a href="/one">one</a>' }, { signal: before.signal }), /abort/i);
+  const during = new AbortController();
+  const provider = { provider: "google_safe_browsing", source: "live", observe: async (request) => {
+    during.abort(); return { provider: "google_safe_browsing", source: "live",
+      queried_target: request.canonical_target, observed_at: request.requested_at, expires_at: null,
+      freshness: "unknown", state: "no_match", category: null, confidence: "low", reference: null, error: null };
+  } };
+  await assert.rejects(executePasteScan({ mode: "html", base_url: "https://source.example/",
+    html: '<a href="/one">one</a>' }, { signal: during.signal, provider }), /abort/i);
 });
 
 const deferred = () => {

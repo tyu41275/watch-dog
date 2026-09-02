@@ -208,14 +208,14 @@ async function getResult(request: Request, env: Env, scanId: string): Promise<Re
   }));
 }
 
-async function storeResult(
+async function storeLiveResult(
   binding: CoordinatorStub,
   sessionId: string,
   result: ScanResult,
 ): Promise<string> {
-  const response = await binding.fetch(new Request("https://coordinator/results", {
+  const response = await binding.fetch(new Request("https://coordinator/live-results", {
     method: "POST",
-    body: JSON.stringify({ session_id: sessionId, result }),
+    body: JSON.stringify({ version: 1, session_id: sessionId, result }),
   }));
   if (!response.ok) throw new TypeError("result coordination failed");
   const body = await response.json() as { scan_id?: unknown };
@@ -223,6 +223,23 @@ async function storeResult(
     throw new TypeError("result coordination malformed");
   }
   return body.scan_id;
+}
+
+async function commitPaste(
+  binding: CoordinatorStub,
+  sessionId: string,
+  operation: Awaited<ReturnType<typeof executePasteScan>>,
+): Promise<unknown> {
+  const response = await binding.fetch(new Request("https://coordinator/paste-exchanges", {
+    method: "POST",
+    body: JSON.stringify({ ...operation, session_id: sessionId }),
+  }));
+  if (!response.ok) throw new TypeError("paste coordination failed");
+  const body = await response.json() as { receipt?: unknown };
+  if (typeof body !== "object" || body.receipt === null || typeof body.receipt !== "object") {
+    throw new TypeError("paste coordination malformed");
+  }
+  return body.receipt;
 }
 
 async function pasteScan(request: Request, env: Env): Promise<Response> {
@@ -243,11 +260,12 @@ async function pasteScan(request: Request, env: Env): Promise<Response> {
   const input = parsePasteRequest(value);
   if (input === null) return json({ error: "invalid_request" }, 400);
   try {
-    const receipt = await executePasteScan(input, {
-      store: (result) => storeResult(binding, claims.sid, result),
+    const operation = await executePasteScan(input, {
       provider: googleProvider(env),
+      signal: request.signal,
     });
-    return json(receipt, 201);
+    if (request.signal.aborted) throw request.signal.reason;
+    return json(await commitPaste(binding, claims.sid, operation), 201);
   } catch {
     return json({ error: "scan_unavailable" }, 503);
   }
@@ -272,7 +290,7 @@ async function liveScan(request: Request, env: Env): Promise<Response> {
   if (input === null) return json({ error: "invalid_request" }, 400);
   try {
     const receipt = await executeLiveScan(input, {
-      store: (result) => storeResult(binding, claims.sid, result),
+      store: (result) => storeLiveResult(binding, claims.sid, result),
       provider: googleProvider(env),
     });
     return json(receipt, 201);
