@@ -72,6 +72,12 @@ function validSession(value) {
     new Date(value.expires_at).toISOString() === value.expires_at;
 }
 
+function confirmProviderDisclosure(pageDocument) {
+  const confirm = pageDocument.defaultView?.confirm;
+  return typeof confirm === "function" && confirm.call(pageDocument.defaultView,
+    "Watch Dog may send canonical target URLs to Google Safe Browsing for this scan. Continue?") === true;
+}
+
 export async function inspectCurrentPage({ pageDocument, fetcher, signal }) {
   signal?.throwIfAborted();
   const observedAt = new Date().toISOString();
@@ -86,6 +92,9 @@ export async function inspectCurrentPage({ pageDocument, fetcher, signal }) {
   if (!session.ok) throw typedError(session.status, sessionBody);
   if (!validSession(sessionBody)) throw new Error("malformed_response");
   signal?.throwIfAborted();
+  if (!confirmProviderDisclosure(pageDocument)) {
+    throw new Error("provider_consent_required");
+  }
   const requestBody = {
     document_url: pageDocument.URL,
     observed_at: observedAt,
@@ -120,7 +129,9 @@ export async function inspectCurrentPage({ pageDocument, fetcher, signal }) {
     });
     return JSON.stringify(presentExchange(exchange));
   } catch (error) {
-    if (error?.message === "unauthorized") throw error;
+    if (error?.name === "AbortError" || [
+      "unauthorized", "invalid_request", "scan_unavailable", "service_unavailable",
+    ].includes(error?.message)) throw error;
     throw new Error("malformed_response");
   }
 }

@@ -1,4 +1,5 @@
 import {
+  SCAN_LIMITS,
   createScanMachine,
   reduceScanMachine,
   scanJournalEntry,
@@ -65,7 +66,9 @@ function legacy(receipt) {
 }
 
 export async function decodeLiveExchange({ request, receipt, loadResult }) {
-  if (typeof receipt !== "object" || receipt === null || !Array.isArray(receipt.scan_ids)) {
+  if (typeof receipt !== "object" || receipt === null || !Array.isArray(receipt.scan_ids) ||
+    receipt.scan_ids.length > SCAN_LIMITS.results || !receipt.scan_ids.every((id) =>
+      typeof id === "string" && /^[a-f0-9]{32}$/u.test(id))) {
     throw new TypeError("malformed_response");
   }
   const loaded = await Promise.all(receipt.scan_ids.map(loadResult));
@@ -119,6 +122,9 @@ export function presentExchange(exchange) {
     accepted_targets: exchange.receipt.accepted_targets,
     rejected_candidates: exchange.receipt.rejected_candidates,
     truncated: exchange.receipt.truncated,
+    occurrence_count: clone(exchange.receipt.occurrence_count),
+    targets: clone(exchange.receipt.targets),
+    rejections: clone(exchange.receipt.rejections),
     results: exchange.entries.map(({ result }) => clone(result)),
   };
 }
@@ -134,6 +140,19 @@ export function renderExchange(document, container, exchange) {
   const view = presentExchange(exchange);
   appendText(document, container, "p",
     `${view.accepted_targets} accepted; ${view.rejected_candidates} rejected`);
+  for (const target of view.targets) {
+    const section = document.createElement("section");
+    appendText(document, section, "h3", target.canonical_url);
+    for (const occurrence of target.occurrences) {
+      appendText(document, section, "p",
+        `Occurrence ${occurrence.occurrence_index}: ${occurrence.anchor_text} (${occurrence.raw_href})`);
+    }
+    container.append(section);
+  }
+  for (const rejection of view.rejections) {
+    appendText(document, container, "p",
+      `Rejected occurrence ${rejection.occurrence_index}: ${rejection.reason}`);
+  }
   for (const result of view.results) {
     const section = document.createElement("section");
     appendText(document, section, "h3", result.canonical_target ?? result.analysis_state);

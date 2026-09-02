@@ -51,8 +51,22 @@ test("browser consumes the generated reducer and retains duplicate occurrence ev
     accepted_targets: 1,
     rejected_candidates: 1,
     truncated: false,
+    occurrence_count: exchange.receipt.occurrence_count,
+    targets: exchange.receipt.targets,
+    rejections: exchange.receipt.rejections,
     results: exchange.entries.map(({ result }) => result),
   });
+});
+
+test("untrusted result addresses reject before any result retrieval", async () => {
+  const { receipt } = await fixture();
+  for (const scan_ids of [Array(1_000).fill("a".repeat(32)), ["../../session"]]) {
+    let loads = 0;
+    await assert.rejects(decodeLiveExchange({
+      request, receipt: { ...receipt, scan_ids }, loadResult: async () => { loads += 1; },
+    }), /malformed_response/u);
+    assert.equal(loads, 0);
+  }
 });
 
 test("unknown, missing, forged reference, ID and result fields reject at browser ingress", async () => {
@@ -115,4 +129,7 @@ test("canonical hostile strings render only through textContent", async () => {
   const text = JSON.stringify(container).replaceAll("\\u003c", "<");
   assert.match(text, /<img src=x onerror=alert\(1\)>/u);
   assert.match(text, /<svg\/onload=alert\(1\)>/u);
+  assert.match(text, /First/u);
+  assert.match(text, /Second/u);
+  assert.match(text, /unsupported_scheme/u);
 });
