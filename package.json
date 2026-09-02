@@ -4,8 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc",
+    "build": "npm run check:protocol && tsc",
+    "check:protocol": "node scripts/sync-protocol.mjs --check",
     "dev": "npx --yes wrangler@4.127.1 dev",
+    "sync:protocol": "node scripts/sync-protocol.mjs",
     "test": "npm run build && node --test test/*.test.mjs",
     "typecheck": "tsc --noEmit"
   },

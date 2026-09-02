@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "generator": "scripts/sync-protocol.mjs",
+  "typescript_version": "7.0.2",
+  "target": "ES2022",
+  "sources": {
+    "src/shared/analysis.ts": "8a330e2732baf16a86a261977802eb8d0d51e25c388004bf37c44c52d11a5772",
+    "src/shared/candidates.ts": "a57ced9f464ed11a482d93580cda34f92a2237d8e3ac0ae700997a5d19b2999e",
+    "src/shared/canonicalize.ts": "c01102c01f021309210e64b93166dec04ffac62b4470b24c841e036311885fc1",
+    "src/shared/contracts.ts": "d60d5cf496d7bac91ccd5dee9162169a1a9764d5276b8298190911b7ee30db2e",
+    "src/shared/scan-machine.ts": "603e1cfe2befd06c30c6860639e0f5817909f438033a97c9b64bfff040b0851d",
+    "src/worker/fetch/address.ts": "06c9f65962f1b4064ec51700beddc806e41c4e29fac67016091d81fca8e74808",
+    "src/worker/fetch/fetch-machine.ts": "945ccdf95659369e5f1a52db64d470e2947561a53dbff514602994e905d95ba8",
+    "src/worker/fetch/response-scope.ts": "f4ddc56999fd02ce304eefad865ee7e53280f22ab88b755db2f39eb85bae1034"
+  },
+  "chunks": [
+    {
+      "id": "fetch-machine",
+      "file": "fetch-machine.generated.js",
+      "entry": "src/worker/fetch/fetch-machine.ts",
+      "depends_on": [],
+      "exports": [
+        "createFetchMachine",
+        "journalEntry",
+        "reduceFetchMachine",
+        "replayFetchMachine"
+      ],
+      "source_paths": [
+        "src/shared/canonicalize.ts",
+        "src/worker/fetch/address.ts",
+        "src/worker/fetch/fetch-machine.ts",
+        "src/worker/fetch/response-scope.ts"
+      ],
+      "source_tree_sha256": "4e31a7826568edbd2c6da937f21372af947aed9c64928d380f27ae15a5e22d5a",
+      "bytes": 25076,
+      "sha256": "e1c6a5168ff61c10731a6c912bacc9cb2bddbf1e583e159c8cc9750daae184a9"
+    },
+    {
+      "id": "scan-machine",
+      "file": "scan-machine.generated.js",
+      "entry": "src/shared/scan-machine.ts",
+      "depends_on": [
+        "fetch-machine"
+      ],
+      "exports": [
+        "SCAN_LIMITATIONS",
+        "SCAN_LIMITS",
+        "createScanMachine",
+        "reduceScanMachine",
+        "replayScanMachine",
+        "scanJournalEntry",
+        "verifyScanExchange"
+      ],
+      "source_paths": [
+        "src/shared/analysis.ts",
+        "src/shared/candidates.ts",
+        "src/shared/canonicalize.ts",
+        "src/shared/contracts.ts",
+        "src/shared/scan-machine.ts",
+        "src/worker/fetch/address.ts",
+        "src/worker/fetch/fetch-machine.ts",
+        "src/worker/fetch/response-scope.ts"
+      ],
+      "source_tree_sha256": "3fc5d6582789ce62bc69cc007f6555f99d59011273a93eca7ef6a513de5e6565",
+      "bytes": 53330,
+      "sha256": "ab81654a5e3f3ef2af9aaf5e99c4abe10e0bd3aaede8d2ea72134f61604b8ec1"
+    }
+  ]
+}
