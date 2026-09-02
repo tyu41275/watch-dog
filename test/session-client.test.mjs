@@ -13,7 +13,8 @@ const scanResult = (id = A, mode = "paste_html") => ({ scan_id: id, mode,
   contradicting_evidence: [], provider_observations: [], limitations: ["bounded"] });
 const envelope = (id = A, mode) => Response.json({ status: "ok",
   result: scanResult(id, mode) });
-const receipt = (id = A) => Response.json({ mode: "paste_html", scan_ids: [id],
+const receipt = (id = A) => Response.json({ mode: "paste_html",
+  scan_ids: Array.isArray(id) ? id : [id],
   receipt_id: "d".repeat(32), occurrence_count: { kind: "exact", count: 1 },
   accepted_targets: 1, rejected_candidates: 0, truncated: false,
   unscannable_reason: null, fetch_evidence: null, targets: [], rejections: [] },
@@ -150,6 +151,37 @@ test("abort-ignoring fetch and JSON settle on cancel, supersession and timeout",
   release(session());
   assert.equal(await second, true);
   assert.equal(superseded.operations.size, 0);
+});
+
+test("a failed parallel result load drains siblings before newer authentication", async () => {
+  let releaseSibling;
+  const client = new SessionClient(async (path) => {
+    if (path === "/api/session" || path === "/api/login") return session();
+    if (path === "/api/scans/paste") return receipt([A, B]);
+    if (path.endsWith(A)) return Response.json({ status: "ok" });
+    return new Promise((resolve) => { releaseSibling = resolve; });
+  });
+  const failed = paste(client);
+  const rejected = assert.rejects(failed, /malformed_response/u);
+  while (releaseSibling === undefined) await tick();
+  await rejected;
+  assert.equal(client.operations.size, 0);
+  await client.login({ username: "new", password: "authority" });
+  releaseSibling(new Response("", { status: 401 }));
+  await tick();
+  assert.equal(client.auth.csrf, CSRF);
+});
+
+test("generated live protocol errors use the closed browser vocabulary", async () => {
+  const liveReceipt = { mode: "live_page", analyzed_at: "not-iso", scan_ids: [],
+    observed_candidates: 0, accepted_targets: 0, rejected_candidates: 0,
+    truncated: false, page_evidence_trust: "untrusted", targets: [], rejections: [] };
+  const client = new SessionClient(async (path) => path === "/api/session"
+    ? session() : Response.json(liveReceipt, { status: 201 }));
+  await assert.rejects(client.scanLive({ document_url: "https://example.test/reference",
+    observed_at: "2026-09-01T06:30:00.000Z", candidates: [], extraction_rejections: [] },
+  { consent: true }), (error) => error.message === "malformed_response");
+  assert.equal(client.operations.size, 0);
 });
 
 test("consent and invalid result IDs reject before protected network entry", async () => {

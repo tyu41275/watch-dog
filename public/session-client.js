@@ -75,12 +75,10 @@ export class SessionClient {
     return scope;
   }
   finish(scope) {
-    clearTimeout(scope.timer);
-    scope.externalSignal?.removeEventListener("abort", scope.externalAbort);
+    clearTimeout(scope.timer); scope.externalSignal?.removeEventListener("abort", scope.externalAbort);
     this.operations.delete(scope); }
   current(scope) {
-    return this.operations.has(scope) && !scope.controller.signal.aborted &&
-      scope.epoch === this.epoch; }
+    return this.operations.has(scope) && !scope.controller.signal.aborted && scope.epoch === this.epoch; }
   invalidate(reason = "unauthorized", keep = null) {
     this.epoch += 1; this.auth = null; this.handlers.clear(reason);
     for (const scope of this.operations) if (scope !== keep) {
@@ -100,6 +98,7 @@ export class SessionClient {
       throw new Error("service_unavailable");
     }
     if (!(response instanceof Response)) throw new Error("service_unavailable");
+    if (!this.current(scope)) throw new DOMException("stale operation", "AbortError");
     if (response.status === 401 || response.status === 403) {
       this.invalidate("unauthorized", scope); throw new Error("unauthorized");
     }
@@ -116,15 +115,15 @@ export class SessionClient {
   transitionAuth(scope, value) {
     const session = parseSession(value);
     if (!this.current(scope)) throw new DOMException("stale operation", "AbortError");
-    this.auth = session; this.handlers.auth("authenticated");
-    return session; }
+    this.auth = session; this.handlers.auth("authenticated"); return session; }
   async refresh(scope) {
     const body = await this.request(scope, "/api/session", {
       method: "GET", headers: { accept: "application/json" } });
     return this.transitionAuth(scope, body); }
   async run(signal, action) {
     const scope = this.begin(signal);
-    try { return await action(scope); } finally { this.finish(scope); } }
+    try { return await action(scope); }
+    catch (error) { scope.controller.abort(new DOMException("operation failed", "AbortError")); throw error; } finally { this.finish(scope); } }
   async initialize(options = {}) {
     try {
       return await this.run(options.signal, async (scope) => {
@@ -186,9 +185,10 @@ export class SessionClient {
       const ids = resultIds(receipt);
       let output;
       if (kind === "live_page") {
-        const exchange = await decodeLiveExchange({ request: payload, receipt,
-          loadResult: (id) => this.loadResult(scope, id) });
-        output = presentExchange(exchange);
+        try { const exchange = await decodeLiveExchange({ request: payload, receipt,
+          loadResult: (id) => this.loadResult(scope, id) }); output = presentExchange(exchange); }
+        catch (error) { if (error?.name === "AbortError" || ["unauthorized", "service_unavailable", "malformed_response"].includes(error?.message)) throw error;
+          throw new Error("malformed_response"); }
       } else {
         if (receipt.mode !== kind) throw new Error("malformed_response");
         const envelopes = await Promise.all(ids.map((id) => this.loadResult(scope, id)));
