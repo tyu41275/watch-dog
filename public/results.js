@@ -45,9 +45,10 @@ function atoms(request) {
   ].sort((left, right) => left.index - right.index).map(({ atom }) => atom);
 }
 
-function legacy(receipt) {
+function legacy(receipt, analyzedAt) {
   return {
     mode: "live_page",
+    analyzed_at: analyzedAt,
     scan_ids: [...receipt.scan_ids],
     observed_candidates: receipt.occurrence_count.count,
     accepted_targets: receipt.accepted_targets,
@@ -67,7 +68,8 @@ function legacy(receipt) {
 
 export async function decodeLiveExchange({ request, receipt, loadResult }) {
   if (typeof receipt !== "object" || receipt === null || !Array.isArray(receipt.scan_ids) ||
-    receipt.scan_ids.length > SCAN_LIMITS.results || !receipt.scan_ids.every((id) =>
+    receipt.scan_ids.length > SCAN_LIMITS.results ||
+    new Set(receipt.scan_ids).size !== receipt.scan_ids.length || !receipt.scan_ids.every((id) =>
       typeof id === "string" && /^[a-f0-9]{32}$/u.test(id))) {
     throw new TypeError("malformed_response");
   }
@@ -79,12 +81,7 @@ export async function decodeLiveExchange({ request, receipt, loadResult }) {
     }
   }
   const results = loaded.map(({ result }) => result);
-  const analyzedAt = results.flatMap((result) => result?.provider_observations ?? [])
-    .reduce((latest, observation) => observation?.freshness === "stale" &&
-      typeof observation.expires_at === "string" &&
-      Date.parse(observation.expires_at) > Date.parse(latest)
-      ? observation.expires_at : latest, request.observed_at);
-  const input = { version: 1, kind: "live_page", analyzed_at: analyzedAt,
+  const input = { version: 1, kind: "live_page", analyzed_at: receipt.analyzed_at,
     base_url: request.document_url, document_url: request.document_url };
   let machine = createScanMachine(input);
   let effect = machine.pending;
@@ -112,7 +109,7 @@ export async function decodeLiveExchange({ request, receipt, loadResult }) {
     ids: [receiptId, ...receipt.scan_ids] });
   machine = reduceScanMachine(machine, entry.fact);
   const exchange = machine.exchange;
-  if (exchange === null || !same(legacy(exchange.receipt), receipt) ||
+  if (exchange === null || !same(legacy(exchange.receipt, receipt.analyzed_at), receipt) ||
     !same(exchange.entries.map(({ result }) => result), results)) {
     throw new TypeError("malformed_response");
   }

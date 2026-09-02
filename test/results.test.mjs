@@ -38,28 +38,30 @@ async function fixture({ input = request, now = NOW, ids = [], provider } = {}) 
   return { receipt, values, loadResult };
 }
 
-test("browser replays the server analysis clock for stale provider evidence", async () => {
+test("browser replays the exact server clock for fresh and stale evidence", async () => {
   const observedAt = "2026-09-01T06:25:00.000Z";
   const input = structuredClone(request);
   input.observed_at = observedAt;
   for (const candidate of input.candidates) candidate.provenance.extracted_at = observedAt;
-  const { receipt, loadResult } = await fixture({
-    input,
-    provider: {
-      provider: "google_safe_browsing",
-      source: "live",
-      observe: async ({ canonical_target }) => ({
+  input.candidates[0].anchor_text = "https://attacker.invalid/login";
+  for (const [providerAt, expiresAt, freshness] of [
+    ["2026-09-01T05:30:00.000Z", "2026-09-01T06:00:00.000Z", "stale"],
+    ["2026-09-01T06:29:00.000Z", "2026-09-01T06:35:00.000Z", "fresh"],
+  ]) {
+    const { receipt, loadResult } = await fixture({ input, provider: {
+      provider: "google_safe_browsing", source: "live", observe: async ({ canonical_target }) => ({
         provider: "google_safe_browsing", source: "live", queried_target: canonical_target,
-        observed_at: "2026-09-01T05:30:00.000Z",
-        expires_at: "2026-09-01T06:00:00.000Z", freshness: "stale",
+        observed_at: providerAt, expires_at: expiresAt, freshness,
         state: "no_match", category: null, confidence: "high", reference: null, error: null,
       }),
-    },
-  });
-  const exchange = await decodeLiveExchange({ request: input, receipt, loadResult });
-  assert.equal(exchange.entries[0].result.provider_observations[0].observed_at,
-    "2026-09-01T05:30:00.000Z");
-  assert.equal(exchange.entries[0].result.provider_observations[0].freshness, "stale");
+    } });
+    const exchange = await decodeLiveExchange({ request: input, receipt, loadResult });
+    assert.equal(receipt.analyzed_at, NOW);
+    assert.equal(exchange.entries[0].result.provider_observations[0].freshness, freshness);
+    assert.equal(exchange.entries[0].result.supporting_evidence[0].observed_at, NOW);
+    await assert.rejects(decodeLiveExchange({ request: input,
+      receipt: { ...receipt, analyzed_at: observedAt }, loadResult }), /malformed_response/u);
+  }
 });
 
 test("browser chooses a bounded collision-free synthetic receipt ID", async () => {
@@ -92,7 +94,8 @@ test("browser consumes the generated reducer and retains duplicate occurrence ev
 
 test("untrusted result addresses reject before any result retrieval", async () => {
   const { receipt } = await fixture();
-  for (const scan_ids of [Array(1_000).fill("a".repeat(32)), ["../../session"]]) {
+  for (const scan_ids of [Array(1_000).fill("a".repeat(32)), ["../../session"],
+    ["a".repeat(32), "a".repeat(32)]]) {
     let loads = 0;
     await assert.rejects(decodeLiveExchange({
       request, receipt: { ...receipt, scan_ids }, loadResult: async () => { loads += 1; },

@@ -76,6 +76,7 @@ function sessionResponse() {
 function receiptResponse(overrides = {}) {
   return Response.json({
     mode: "live_page",
+    analyzed_at: "2026-09-01T06:30:00.000Z",
     scan_ids: ["a".repeat(32)],
     observed_candidates: 1,
     accepted_targets: 1,
@@ -148,6 +149,7 @@ test("live candidates use shared canonicalization, deduplication, rejection, and
     },
   });
   assert.equal(receipt.page_evidence_trust, "untrusted");
+  assert.equal(receipt.analyzed_at, observedAt);
   assert.equal(receipt.observed_candidates, 4);
   assert.equal(receipt.accepted_targets, 2);
   assert.equal(receipt.rejected_candidates, 1);

@@ -35,7 +35,7 @@ export interface LiveRequest {
 }
 
 export interface LiveReceipt {
-  mode: "live_page"; scan_ids: string[]; observed_candidates: number;
+  mode: "live_page"; analyzed_at: string; scan_ids: string[]; observed_candidates: number;
   accepted_targets: number; rejected_candidates: number; truncated: boolean;
   page_evidence_trust: "untrusted";
   targets: Array<{ canonical_url: string; occurrence_indices: number[]; anchor_text_variants: string[] }>;
@@ -214,7 +214,7 @@ export async function executeLiveScan(
   if (final === null) throw new TypeError("live exchange is incomplete");
   const receipt = final.receipt;
   return {
-    mode: "live_page", scan_ids: [...receipt.scan_ids],
+    mode: "live_page", analyzed_at: operation.input.analyzed_at, scan_ids: [...receipt.scan_ids],
     observed_candidates: receipt.occurrence_count.count,
     accepted_targets: receipt.accepted_targets, rejected_candidates: receipt.rejected_candidates,
     truncated: receipt.truncated, page_evidence_trust: "untrusted",
