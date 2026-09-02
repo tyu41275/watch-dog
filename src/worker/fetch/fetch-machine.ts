@@ -61,7 +61,8 @@ function parseEffect(value: unknown, path: string): MachineEffect {
   if (kind === "discard") { keys(data, ["kind", "id", "issued_at"], path); return { kind, ...common }; }
   if (kind === "metadata") {
     keys(data, ["kind", "id", "issued_at", "limits"], path);
-    const limits = record(data.limits, `${path}.limits`); const parsed: Record<string, number> = {};
+    const limits = record(data.limits, `${path}.limits`); keys(limits, ["location", "content-type", "content-encoding", "content-length"], `${path}.limits`);
+    const parsed: Record<string, number> = {};
     for (const [name, size] of Object.entries(limits)) parsed[name] = integer(size, `${path}.limits.${name}`, true);
     return { kind, limits: parsed, ...common };
   }

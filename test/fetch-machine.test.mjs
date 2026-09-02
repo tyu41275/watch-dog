@@ -80,6 +80,9 @@ test("every systematic unknown and missing journal field rejects for every effec
   assert.deepEqual([...new Set(entries.map(({ effect }) => effect.kind))].sort(), ["discard", "dns", "fetch", "metadata", "read"]);
   const mutants = oneFieldMutants(entries); assert.equal(mutants.length, 157);
   for (const mutant of mutants) assert.throws(() => replayFetchMachine("https://public.example.co/start", LIMITS, 0, mutant), TypeError);
+  const prototypeNamed = structuredClone(entries);
+  Object.defineProperty(prototypeNamed[2].effect.limits, "__proto__", { value: 1, enumerable: true });
+  assert.throws(() => replayFetchMachine("https://public.example.co/start", LIMITS, 0, prototypeNamed), TypeError);
 
   const pending = createFetchMachine("https://public.example.co/", LIMITS, 0);
   const fact = { kind: "dns", completed_at: 1, addresses: ["8.8.8.8"], overflow: false, failure: null };
