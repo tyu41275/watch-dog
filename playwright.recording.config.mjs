@@ -8,6 +8,7 @@ export default {
   ...base,
   testMatch: "recording.spec.mjs",
   retries: 0,
+  preserveOutput: "always",
   outputDir: `artifacts/operator-recording/${recordingId}`,
   use: { ...base.use, headless: false, trace: "off", screenshot: "off", video: "on" },
 };
