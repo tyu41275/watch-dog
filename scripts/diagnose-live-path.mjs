@@ -42,6 +42,9 @@ const objectKeys = (value) => typeof value === "object" && value !== null && !Ar
 const safeError = (body) => allowedErrors.has(body?.error) ? body.error : body?.error == null ? null : "other";
 const safeReason = (body) => allowedReasons.has(body?.unscannable_reason)
   ? body.unscannable_reason : body?.unscannable_reason == null ? null : "other";
+const providerStates = new Set(["match", "no_match", "error", "not_configured"]);
+const providerErrors = new Set(["timeout", "quota", "unavailable", "malformed_response", "not_configured"]);
+const analysisStates = new Set(["complete", "unknown", "unscannable", "provider_error", "stale", "conflicting"]);
 
 const evidence = {
   schema_version: 1,
@@ -64,7 +67,7 @@ const evidence = {
 
 const summarizeScan = async (response) => {
   const body = await boundedJson(response);
-  return {
+  return { body, summary: {
     status: response.status,
     keys: objectKeys(body),
     error: safeError(body),
@@ -74,7 +77,33 @@ const summarizeScan = async (response) => {
     scan_id_count: Array.isArray(body?.scan_ids) ? body.scan_ids.length : null,
     unscannable_reason: safeReason(body),
     fetch_evidence_present: body?.fetch_evidence != null,
-  };
+  } };
+};
+
+const summarizeResults = async (body, session) => {
+  if (!Array.isArray(body?.scan_ids)) return [];
+  return Promise.all(body.scan_ids.map(async (id) => {
+    if (typeof id !== "string" || !/^[a-f0-9]{32}$/u.test(id)) return { id_shape_valid: false };
+    const response = await request(`/api/results/${id}`, { headers: { cookie: session } });
+    const stored = await boundedJson(response);
+    const result = stored?.result;
+    return {
+      id_shape_valid: true,
+      status: response.status,
+      envelope_status: stored?.status === "ok" ? "ok" : safeError(stored),
+      analysis_state: analysisStates.has(result?.analysis_state) ? result.analysis_state : null,
+      observations: Array.isArray(result?.provider_observations)
+        ? result.provider_observations.map((observation) => ({
+          provider: observation?.provider === "google_safe_browsing" ? observation.provider : null,
+          source: ["live", "fixture"].includes(observation?.source) ? observation.source : null,
+          state: providerStates.has(observation?.state) ? observation.state : null,
+          error: providerErrors.has(observation?.error) ? observation.error
+            : observation?.error == null ? null : "other",
+          freshness: ["fresh", "stale", "unknown"].includes(observation?.freshness)
+            ? observation.freshness : null,
+        })) : [],
+    };
+  }));
 };
 
 try {
@@ -113,21 +142,26 @@ try {
 
   if (response.status === 200 && session !== null && csrf !== null) {
     const headers = { cookie: session, "x-watchdog-csrf": csrf };
-    evidence.html_scan = await summarizeScan(await post("/api/scans/paste", {
+    const htmlScan = await summarizeScan(await post("/api/scans/paste", {
       mode: "html",
       html: '<a href="https://example.com/">diagnostic</a>',
       base_url: base.origin,
     }, headers));
+    evidence.html_scan = { ...htmlScan.summary, results: await summarizeResults(htmlScan.body, session) };
     evidence.url_scans = {};
     for (const [name, url] of [
       ["httpbingo", "https://httpbingo.org/links/3/0"],
       ["httpbin", "https://httpbin.org/links/3/0"],
       ["example", "https://example.com/"],
     ]) {
-      evidence.url_scans[name] = await summarizeScan(await post("/api/scans/paste", {
+      const scan = await summarizeScan(await post("/api/scans/paste", {
         mode: "url",
         url,
       }, headers));
+      evidence.url_scans[name] = {
+        ...scan.summary,
+        results: await summarizeResults(scan.body, session),
+      };
     }
     response = await post("/api/logout", {}, headers);
     body = await boundedJson(response);
