@@ -18,6 +18,46 @@ function json(value, init = {}) {
   return Response.json(value, init);
 }
 
+function varint(value) {
+  const bytes = [];
+  do {
+    const octet = value % 128;
+    value = Math.floor(value / 128);
+    bytes.push(octet | (value === 0 ? 0 : 0x80));
+  } while (value !== 0);
+  return bytes;
+}
+
+function field(number, wire, value) {
+  return [...varint(number * 8 + wire), ...(wire === 2 ? [...varint(value.length), ...value] : varint(value))];
+}
+
+function message(...fields) {
+  return Uint8Array.from(fields.flat());
+}
+
+function protobuf(bytes, init = {}) {
+  const headers = new Headers(init.headers);
+  headers.set("content-type", "application/x-protobuf");
+  return new Response(bytes, { ...init, headers });
+}
+
+function duration(seconds, nanos = 0) {
+  return message(field(1, 0, seconds), ...(nanos === 0 ? [] : [field(2, 0, nanos)]));
+}
+
+function threat(url, types, { packed = true } = {}) {
+  const encodedUrl = new TextEncoder().encode(url);
+  const typeFields = packed
+    ? [field(2, 2, types.flatMap(varint))]
+    : types.map((type) => field(2, 0, type));
+  return message(field(1, 2, encodedUrl), ...typeFields);
+}
+
+function providerMessage({ threats = [], seconds = 60, nanos = 0 } = {}) {
+  return message(...threats.map((value) => field(1, 2, value)), field(2, 2, duration(seconds, nanos)));
+}
+
 function expectedError(error) {
   return {
     provider: "google_safe_browsing",
@@ -76,11 +116,11 @@ test("v5 lookup sends one raw canonical URL and keeps the API key out of the URL
   assert.equal(seen.length, 1);
   assert.equal(seen[0].url.origin + seen[0].url.pathname, GOOGLE_SAFE_BROWSING.endpoint);
   assert.deepEqual([...seen[0].url.searchParams.keys()], ["alt", "urls"]);
-  assert.equal(seen[0].url.searchParams.get("alt"), "json");
+  assert.equal(seen[0].url.searchParams.get("alt"), "proto");
   assert.equal(seen[0].url.searchParams.get("urls"), canonicalTarget);
   assert.equal(seen[0].url.href.includes(secret), false);
   assert.equal(seen[0].headers.get("x-goog-api-key"), secret);
-  assert.equal(seen[0].headers.get("accept"), "application/json");
+  assert.equal(seen[0].headers.get("accept"), "application/x-protobuf");
   assert.equal(seen[0].init.method, "GET");
   assert.ok(seen[0].init.signal instanceof AbortSignal);
   assert.deepEqual(observation, {
@@ -99,6 +139,26 @@ test("v5 lookup sends one raw canonical URL and keeps the API key out of the URL
   assert.equal(JSON.stringify(observation).includes(secret), false);
   assert.equal(listenerBalance, 0);
   assert.doesNotMatch(JSON.stringify(observation), /\b(is safe|safe to|clean|harmless)\b/i);
+});
+
+test("bounded protobuf responses normalize no-match and packed or unpacked threats", async () => {
+  const noMatch = parseProviderObservation(await observeResponse(protobuf(providerMessage({
+    seconds: 60, nanos: 250_000_000,
+  }))));
+  assert.equal(noMatch.state, "no_match");
+  assert.equal(noMatch.expires_at, "2026-09-01T08:31:00.250Z");
+
+  const packed = await observeResponse(protobuf(providerMessage({
+    threats: [threat(canonicalTarget, [3, 1, 2])], seconds: 7_200,
+  })));
+  assert.equal(packed.state, "match");
+  assert.equal(packed.category, "malware");
+  assert.equal(packed.expires_at, "2026-09-01T09:00:00.000Z");
+
+  const unpacked = await observeResponse(protobuf(providerMessage({
+    threats: [threat(canonicalTarget, [4], { packed: false })], seconds: 1,
+  })));
+  assert.equal(unpacked.category, "potentially_harmful_application");
 });
 
 test("recognized threats map to closed categories with Google-only attribution and 30-minute freshness", async () => {
@@ -211,6 +271,20 @@ test("response parsing fails closed on malformed, oversized and open provider sh
   const malformed = [
     new Response("not-json", { headers: { "content-type": "application/json" } }),
     new Response("{}", { headers: { "content-type": "text/plain" } }),
+    protobuf(new Uint8Array()),
+    protobuf(message(field(3, 2, []), field(2, 2, duration(1)))),
+    protobuf(message(field(2, 2, duration(1)), field(2, 2, duration(1)))),
+    protobuf(message(field(2, 0, 1))),
+    protobuf(message(field(2, 2, message(field(3, 0, 1))))),
+    protobuf(message(field(2, 2, message(field(1, 0, Number.MAX_SAFE_INTEGER))))),
+    protobuf(message(field(2, 2, message(field(2, 0, 1_000_000_000))))),
+    protobuf(message(field(1, 2, threat(canonicalTarget, [0])), field(2, 2, duration(1)))),
+    protobuf(message(field(1, 2, threat(canonicalTarget, [5])), field(2, 2, duration(1)))),
+    protobuf(message(field(1, 2, message(field(1, 2, [0xff]), field(2, 0, 1))),
+      field(2, 2, duration(1)))),
+    protobuf(Uint8Array.from([0x12, 0x02, 0x08])),
+    protobuf(Uint8Array.from([0x12, 0x80, 0x00])),
+    protobuf(Uint8Array.from([0x12, 0x80])),
     json([]),
     json({ threats: [] }),
     json({ threats: [], cacheDuration: "1m" }),

@@ -66,11 +66,11 @@ function durationMilliseconds(value: unknown): number | null {
     : null;
 }
 
-async function boundedJson(response: Response, signal: AbortSignal): Promise<unknown> {
+async function boundedBytes(response: Response, signal: AbortSignal): Promise<Uint8Array> {
   const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
-  if (contentType !== "application/json") {
+  if (contentType !== "application/json" && contentType !== "application/x-protobuf") {
     discardBody(response);
-    throw new TypeError("provider response is not JSON");
+    throw new TypeError("provider response has an unsupported content type");
   }
   const declared = Number(response.headers.get("content-length") ?? 0);
   if (
@@ -123,7 +123,147 @@ async function boundedJson(response: Response, signal: AbortSignal): Promise<unk
     bytes.set(chunk, offset);
     offset += chunk.length;
   }
-  return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  return bytes;
+}
+
+interface ProtoCursor {
+  offset: number;
+}
+
+function protoVarint(bytes: Uint8Array, cursor: ProtoCursor, end = bytes.length): number {
+  let value = 0;
+  let multiplier = 1;
+  for (let count = 0; count < 10; count += 1) {
+    if (cursor.offset >= end) throw new TypeError("truncated protobuf varint");
+    const octet = bytes[cursor.offset] as number;
+    cursor.offset += 1;
+    const payload = octet & 0x7f;
+    if (payload > Math.floor((Number.MAX_SAFE_INTEGER - value) / multiplier)) {
+      throw new TypeError("protobuf integer exceeds bounds");
+    }
+    value += payload * multiplier;
+    if ((octet & 0x80) === 0) {
+      if (count > 0 && payload === 0) throw new TypeError("non-canonical protobuf varint");
+      return value;
+    }
+    multiplier *= 128;
+  }
+  throw new TypeError("protobuf varint exceeds bounds");
+}
+
+function protoLength(bytes: Uint8Array, cursor: ProtoCursor, end: number): Uint8Array {
+  const length = protoVarint(bytes, cursor, end);
+  if (length > end - cursor.offset) throw new TypeError("truncated protobuf field");
+  const value = bytes.subarray(cursor.offset, cursor.offset + length);
+  cursor.offset += length;
+  return value;
+}
+
+function protoKey(bytes: Uint8Array, cursor: ProtoCursor, end: number): [number, number] {
+  const key = protoVarint(bytes, cursor, end);
+  const field = Math.floor(key / 8);
+  const wire = key % 8;
+  if (field < 1 || field > 536_870_911) throw new TypeError("invalid protobuf field");
+  return [field, wire];
+}
+
+function protoDuration(bytes: Uint8Array): string {
+  const cursor = { offset: 0 };
+  let seconds = 0;
+  let nanos = 0;
+  let hasSeconds = false;
+  let hasNanos = false;
+  while (cursor.offset < bytes.length) {
+    const [field, wire] = protoKey(bytes, cursor, bytes.length);
+    if (wire !== 0 || (field !== 1 && field !== 2)) {
+      throw new TypeError("unsupported protobuf duration field");
+    }
+    const value = protoVarint(bytes, cursor);
+    if (field === 1) {
+      if (hasSeconds) throw new TypeError("duplicate protobuf duration seconds");
+      seconds = value;
+      hasSeconds = true;
+    } else {
+      if (hasNanos || value > 999_999_999) throw new TypeError("invalid protobuf duration nanos");
+      nanos = value;
+      hasNanos = true;
+    }
+  }
+  return nanos === 0
+    ? `${seconds}s`
+    : `${seconds}.${String(nanos).padStart(9, "0")}s`;
+}
+
+function protoThreat(bytes: Uint8Array): Record<string, unknown> {
+  const cursor = { offset: 0 };
+  let url: string | undefined;
+  const threatTypes: string[] = [];
+  const names = [
+    undefined,
+    "MALWARE",
+    "SOCIAL_ENGINEERING",
+    "UNWANTED_SOFTWARE",
+    "POTENTIALLY_HARMFUL_APPLICATION",
+  ] as const;
+  const addType = (value: number): void => {
+    const name = names[value];
+    if (name === undefined || threatTypes.length >= CATEGORY_PRIORITY.length) {
+      throw new TypeError("unknown or excessive protobuf threat type");
+    }
+    threatTypes.push(name);
+  };
+  while (cursor.offset < bytes.length) {
+    const [field, wire] = protoKey(bytes, cursor, bytes.length);
+    if (field === 1 && wire === 2) {
+      if (url !== undefined) throw new TypeError("duplicate protobuf threat URL");
+      url = new TextDecoder("utf-8", { fatal: true })
+        .decode(protoLength(bytes, cursor, bytes.length));
+    } else if (field === 2 && wire === 0) {
+      addType(protoVarint(bytes, cursor));
+    } else if (field === 2 && wire === 2) {
+      const packed = protoLength(bytes, cursor, bytes.length);
+      const packedCursor = { offset: 0 };
+      while (packedCursor.offset < packed.length) addType(protoVarint(packed, packedCursor));
+    } else {
+      throw new TypeError("unsupported protobuf threat field");
+    }
+  }
+  if (url === undefined || threatTypes.length === 0) {
+    throw new TypeError("incomplete protobuf threat");
+  }
+  return { url, threatTypes };
+}
+
+function protobufResponse(bytes: Uint8Array): unknown {
+  const cursor = { offset: 0 };
+  const threats: Record<string, unknown>[] = [];
+  let cacheDuration: string | undefined;
+  while (cursor.offset < bytes.length) {
+    const [field, wire] = protoKey(bytes, cursor, bytes.length);
+    if (wire !== 2 || (field !== 1 && field !== 2)) {
+      throw new TypeError("unsupported protobuf response field");
+    }
+    const value = protoLength(bytes, cursor, bytes.length);
+    if (field === 1) {
+      if (threats.length >= GOOGLE_SAFE_BROWSING.max_threats) {
+        throw new TypeError("excessive protobuf threats");
+      }
+      threats.push(protoThreat(value));
+    } else {
+      if (cacheDuration !== undefined) throw new TypeError("duplicate protobuf cache duration");
+      cacheDuration = protoDuration(value);
+    }
+  }
+  if (cacheDuration === undefined) throw new TypeError("missing protobuf cache duration");
+  return threats.length === 0 ? { cacheDuration } : { threats, cacheDuration };
+}
+
+async function boundedProviderResponse(response: Response, signal: AbortSignal): Promise<unknown> {
+  const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+  const bytes = await boundedBytes(response, signal);
+  return contentType === "application/json"
+    ? JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes))
+    : protobufResponse(bytes);
 }
 
 function expressionUrl(value: string): URL {
@@ -249,7 +389,7 @@ export class GoogleSafeBrowsingAdapter implements ProviderAdapter {
       return providerErrorObservation(request, this.source, "not_configured");
     }
     const endpoint = new URL(GOOGLE_SAFE_BROWSING.endpoint);
-    endpoint.searchParams.set("alt", "json");
+    endpoint.searchParams.set("alt", "proto");
     endpoint.searchParams.append("urls", request.canonical_target);
     const controller = new AbortController();
     let expire!: (reason: DOMException) => void;
@@ -264,7 +404,7 @@ export class GoogleSafeBrowsingAdapter implements ProviderAdapter {
       try {
         const transport = this.fetcher(endpoint, {
           method: "GET",
-          headers: { accept: "application/json", "x-goog-api-key": this.apiKey },
+          headers: { accept: "application/x-protobuf", "x-goog-api-key": this.apiKey },
           signal: controller.signal,
         });
         void transport.then((late) => {
@@ -294,7 +434,7 @@ export class GoogleSafeBrowsingAdapter implements ProviderAdapter {
       }
       try {
         const observation = normalizedResponse(
-          await boundedJson(response, controller.signal), request, requestedMs,
+          await boundedProviderResponse(response, controller.signal), request, requestedMs,
         );
         return observation ?? providerErrorObservation(request, this.source, "malformed_response");
       } catch (error) {
