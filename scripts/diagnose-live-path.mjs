@@ -52,7 +52,7 @@ const evidence = {
   health: null,
   login: null,
   html_scan: null,
-  url_scan: null,
+  url_scans: null,
   logout: null,
   secret_values_preserved: false,
   cookie_value_preserved: false,
@@ -118,10 +118,17 @@ try {
       html: '<a href="https://example.com/">diagnostic</a>',
       base_url: base.origin,
     }, headers));
-    evidence.url_scan = await summarizeScan(await post("/api/scans/paste", {
-      mode: "url",
-      url: "https://httpbingo.org/links/3/0",
-    }, headers));
+    evidence.url_scans = {};
+    for (const [name, url] of [
+      ["httpbingo", "https://httpbingo.org/links/3/0"],
+      ["httpbin", "https://httpbin.org/links/3/0"],
+      ["example", "https://example.com/"],
+    ]) {
+      evidence.url_scans[name] = await summarizeScan(await post("/api/scans/paste", {
+        mode: "url",
+        url,
+      }, headers));
+    }
     response = await post("/api/logout", {}, headers);
     body = await boundedJson(response);
     evidence.logout = {
