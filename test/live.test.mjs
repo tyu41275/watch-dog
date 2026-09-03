@@ -255,7 +255,7 @@ test("the fixed Worker route requires session, origin, and CSRF then stores owne
   assert.equal(rejectedReceipt.accepted_targets, 0);
 });
 
-test("the fixed reference route rewrites only the asset request and canonicalizes direct access", async () => {
+test("the fixed reference route lets Assets resolve extensionless paths and canonicalizes direct access", async () => {
   const seen = [];
   const env = { ASSETS: { fetch: async (request) => {
     seen.push(request.url);
@@ -263,14 +263,14 @@ test("the fixed reference route rewrites only the asset request and canonicalize
   } } };
   assert.equal(await (await worker.fetch(new Request("https://watch.example/reference"), env)).text(),
     "reference asset");
-  assert.deepEqual(seen, ["https://watch.example/reference.html"]);
+  assert.deepEqual(seen, ["https://watch.example/reference"]);
   const direct = await worker.fetch(new Request("https://watch.example/reference.html?probe=1"), env);
   assert.equal(direct.status, 308);
   assert.equal(direct.headers.get("location"), "https://watch.example/reference");
   const queried = await worker.fetch(new Request("https://watch.example/reference?probe=1"), env);
   assert.equal(queried.status, 308);
   assert.equal(queried.headers.get("location"), "https://watch.example/reference");
-  assert.deepEqual(seen, ["https://watch.example/reference.html"]);
+  assert.deepEqual(seen, ["https://watch.example/reference"]);
 });
 
 test("each extraction observes the current rendered anchors instead of a source array", () => {
