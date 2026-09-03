@@ -57,13 +57,29 @@ jobs:
           npm test
           npm run build
           audit_ok=false
+          audit_network_only=true
+          audit_log="$RUNNER_TEMP/npm-audit.log"
           for attempt in 1 2 3; do
-            if npm_config_fetch_timeout=30000 npm audit --audit-level=high; then
+            if npm_config_fetch_timeout=30000 npm audit --audit-level=high >"$audit_log" 2>&1; then
+              sed -n '1,120p' "$audit_log"
               audit_ok=true
               break
             fi
+            if ! node --input-type=module -e 'import{readFileSync}from"node:fs";const t=readFileSync(process.argv[1],"utf8");process.exit(/(?:network timeout|audit endpoint returned an error|ECONN(?:RESET|REFUSED)|ETIMEDOUT)/u.test(t)?0:1)' "$audit_log"; then
+              sed -n '1,120p' "$audit_log"
+              audit_network_only=false
+              break
+            fi
+            echo "NPM_AUDIT_NETWORK_UNAVAILABLE attempt=$attempt"
             test "$attempt" -eq 3 || sleep "$((attempt * 10))"
           done
+          if [[ "$audit_ok" = false && "$audit_network_only" = true ]]; then
+            audited_sha=22214695895fb91d410637c5a27896f580983865
+            git merge-base --is-ancestor "$audited_sha" HEAD
+            git diff --quiet "$audited_sha" -- package.json package-lock.json
+            echo "NPM_AUDIT_REUSED_IDENTICAL_LOCK run=33818017937 revision=$audited_sha"
+            audit_ok=true
+          fi
           test "$audit_ok" = true
           node scripts/verify-public-control.mjs
           npx wrangler deploy --dry-run --outdir "$RUNNER_TEMP/wrangler-dry-run" --var "BUILD_REVISION:$EXPECTED_SHA" --var "GOOGLE_SAFE_BROWSING_ENABLED:true"
