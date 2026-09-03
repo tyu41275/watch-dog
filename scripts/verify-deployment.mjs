@@ -102,11 +102,11 @@ async function main() {
     catch { throw new GateFailure("ui_body_failed"); }
     check(response.status === 200 && text.length <= 250_000 && text.includes(marker), "ui_failed");
   }
+  const first = await correctLogin(); await sessionStatus(first, 200);
   const wrong = await login(username, `${password}\u0000`);
   check(wrong.response.status === 401 && exact(wrong.body, ["error"]) &&
     wrong.body.error === "invalid_credentials" && !wrong.response.headers.has("set-cookie"),
   "wrong_login_not_generic");
-  const first = await correctLogin(); await sessionStatus(first, 200);
   response = await post("/api/scans/paste", { mode: "html", html: "", base_url: base.origin }, first);
   check(response.status === 401 && (await json(response, "csrf"))?.error === "unauthorized",
     "missing_csrf_accepted");
@@ -122,7 +122,7 @@ async function main() {
     receipt.fetch_evidence?.final_url === PUBLIC_CONTROL.url &&
     receipt.fetch_evidence?.redirect_chain?.length === 0 &&
     receipt.fetch_evidence?.validated_hops?.length === 1 &&
-    receipt.fetch_evidence.validated_hops[0]?.hostname === "httpbingo.org",
+    receipt.fetch_evidence.validated_hops[0]?.hostname === "httpbin.org",
   "public_control_failed");
   const observations = [], storedTargets = [];
   for (const id of receipt.scan_ids) {
@@ -141,7 +141,7 @@ async function main() {
     check(exact(denied, ["error"]) && denied.error === "unauthorized", "cross_session_denial_failed");
   }
   const loopback = `http://${[127, 0, 0, 1].join(".")}/`;
-  const redirect = new URL("/redirect-to", `https://${["httpbingo", "org"].join(".")}`);
+  const redirect = new URL("/redirect-to", `https://${["httpbin", "org"].join(".")}`);
   redirect.searchParams.set("url", loopback);
   const refusals = {
     loopback: await refusal(first, loopback, "loopback"),

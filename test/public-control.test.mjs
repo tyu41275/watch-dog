@@ -5,11 +5,11 @@ import { createScanMachine, reduceScanMachine } from "../dist/shared/scan-machin
 import { executePasteScan } from "../dist/worker/fetch/paste.js";
 import { PUBLIC_CONTROL, verifyPublicControl } from "../scripts/verify-public-control.mjs";
 
-const html = '<html><head><title>Links</title></head><body>0 <a href="/links/3/1">1</a> <a href="/links/3/2">2</a> </body></html>';
+const html = "<html><head><title>Links</title></head><body>0 <a href='/links/3/1'>1</a> <a href='/links/3/2'>2</a> </body></html>";
 const publicAddress = "93.184.216.34";
 function transport(body = html) {
   let tick = 1_000;
-  return { resolver: async (hostname) => { assert.equal(hostname, "httpbingo.org");
+  return { resolver: async (hostname) => { assert.equal(hostname, "httpbin.org");
     return [publicAddress]; }, now: () => tick++, fetcher: async (url, init) => {
       assert.equal(url, PUBLIC_CONTROL.url); assert.equal(init.redirect, "manual");
       return new Response(body, { status: 200, headers: { "content-type": "text/html; charset=utf-8" } });
@@ -33,7 +33,7 @@ const observer = { provider: "google_safe_browsing", source: "live", observe: as
 test("the frozen control uses production fetch, admission, extraction, and scan behavior", async () => {
   const result = await verifyPublicControl({ now: () => new Date("2026-09-03T00:00:00Z"),
     fetch_seams: transport() });
-  assert.deepEqual(result, { contract_id: "httpbingo-links-3-0-v1", accepted_targets: 2,
+  assert.deepEqual(result, { contract_id: "httpbin-links-3-0-v1", accepted_targets: 2,
     rejected_candidates: 0, validated_hops: 1, provider_requests: 2, result: "pass" });
 });
 
