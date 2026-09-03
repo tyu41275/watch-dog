@@ -151,6 +151,15 @@ try {
     cache_duration_is_string: typeof providerBody?.cacheDuration === "string",
     cache_duration_format_valid: typeof providerBody?.cacheDuration === "string" &&
       /^(0|[1-9][0-9]*)(?:\.([0-9]{1,9}))?s$/u.test(providerBody.cacheDuration),
+    error_code: Number.isSafeInteger(providerBody?.error?.code) ? providerBody.error.code : null,
+    error_status: typeof providerBody?.error?.status === "string" &&
+      /^[A-Z_]{3,40}$/u.test(providerBody.error.status) ? providerBody.error.status : null,
+    error_message_class: typeof providerBody?.error?.message !== "string" ? null
+      : /API key not valid|API_KEY_INVALID/iu.test(providerBody.error.message) ? "api_key_invalid"
+      : /API has not been used|is disabled/iu.test(providerBody.error.message) ? "api_disabled"
+      : /invalid argument|invalid value/iu.test(providerBody.error.message) ? "invalid_argument"
+      : /quota|rate limit/iu.test(providerBody.error.message) ? "quota"
+      : "other",
   };
 
   response = await post("/api/login", {
