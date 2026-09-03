@@ -49,6 +49,23 @@ test("the exported Worker entrypoint serves health without secrets", async () =>
   assert.deepEqual(await response.json(), { status: "ok", service: "watch-dog" });
 });
 
+test("the deployed revision endpoint accepts only an exact GitHub SHA", async () => {
+  const revision = "a".repeat(40);
+  const accepted = await worker.fetch(
+    new Request("https://example.test/api/revision"), { BUILD_REVISION: revision });
+  assert.equal(accepted.status, 200);
+  assert.deepEqual(await accepted.json(), { revision });
+  assert.equal(accepted.headers.get("cache-control"), "no-store");
+
+  for (const BUILD_REVISION of [undefined, "", "a".repeat(39), "A".repeat(40),
+    `${revision}x`, "not-a-revision"]) {
+    const denied = await worker.fetch(
+      new Request("https://example.test/api/revision"), { BUILD_REVISION });
+    assert.equal(denied.status, 503);
+    assert.deepEqual(await denied.json(), { error: "revision_unavailable" });
+  }
+});
+
 test("the real entrypoint fails closed for unimplemented API routes", async () => {
   const response = await worker.fetch(new Request("https://example.test/api/scans", { method: "POST" }), {});
   assert.equal(response.status, 503);
