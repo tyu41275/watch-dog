@@ -93,9 +93,16 @@ jobs:
           WATCH_DOG_PROVIDER_CONSENT: "true"
           EVIDENCE_PATH: ${{ runner.temp }}/watch-dog-deployment-evidence.json
         run: node scripts/verify-deployment.mjs
-      - name: Install supported Chromium for production capture
+      - name: Install supported Google Chrome for production capture
         if: ${{ always() && inputs.capture_demo && steps.deploy.outcome == 'success' }}
-        run: npx playwright install --with-deps chromium
+        run: |
+          set -euo pipefail
+          npx playwright install --with-deps chrome
+          chrome_bin="$(command -v google-chrome || command -v google-chrome-stable)"
+          test -x "$chrome_bin"
+          chrome_version="$("$chrome_bin" --version)"
+          [[ "$chrome_version" =~ ^Google\ Chrome(\ for\ Testing)?\ ([0-9]+\.){3}[0-9]+$ ]]
+          echo "GOOGLE_CHROME_BIN=$chrome_bin" >> "$GITHUB_ENV"
       - name: Capture authenticated production demo
         if: ${{ always() && inputs.capture_demo && steps.deploy.outcome == 'success' }}
         env:
