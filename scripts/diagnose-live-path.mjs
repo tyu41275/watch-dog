@@ -3,6 +3,7 @@ const REQUIRED = [
   "EXPECTED_SHA",
   "WATCH_DOG_JUDGE_USERNAME",
   "WATCH_DOG_JUDGE_PASSWORD",
+  "GOOGLE_SAFE_BROWSING_API_KEY",
 ];
 
 const required = Object.fromEntries(REQUIRED.map((name) => {
@@ -63,6 +64,7 @@ const evidence = {
   scan_ids_preserved: false,
   target_values_preserved: false,
   provider_payload_preserved: false,
+  direct_provider_shape: null,
 };
 
 const summarizeScan = async (response) => {
@@ -117,6 +119,38 @@ try {
   response = await request("/api/health");
   body = await boundedJson(response);
   evidence.health = { status: response.status, ok: response.status === 200 && body?.status === "ok" };
+
+  const providerUrl = new URL("https://safebrowsing.googleapis.com/v5/urls:search");
+  providerUrl.searchParams.append("urls", "https://httpbin.org/links/3/1");
+  response = await fetch(providerUrl, {
+    method: "GET",
+    headers: { accept: "application/json", "x-goog-api-key": required.GOOGLE_SAFE_BROWSING_API_KEY },
+    redirect: "manual",
+    signal: AbortSignal.timeout(10_000),
+  });
+  const providerContentType = response.headers.get("content-type");
+  const providerDeclaredLength = response.headers.get("content-length");
+  const providerText = await response.text();
+  let providerBody = null;
+  try { providerBody = providerText.length <= 64_000 ? JSON.parse(providerText) : null; }
+  catch { /* shape only */ }
+  evidence.direct_provider_shape = {
+    status: response.status,
+    content_type_json: providerContentType?.split(";", 1)[0]?.trim().toLowerCase() === "application/json",
+    declared_length_present: providerDeclaredLength !== null,
+    declared_length_valid: providerDeclaredLength === null ||
+      (Number.isSafeInteger(Number(providerDeclaredLength)) && Number(providerDeclaredLength) >= 0 &&
+        Number(providerDeclaredLength) <= 64_000),
+    body_within_limit: providerText.length <= 64_000,
+    json_object: typeof providerBody === "object" && providerBody !== null && !Array.isArray(providerBody),
+    keys: objectKeys(providerBody),
+    threats_is_array: Array.isArray(providerBody?.threats),
+    threat_count: Array.isArray(providerBody?.threats) ? providerBody.threats.length : null,
+    cache_duration_present: Object.hasOwn(providerBody ?? {}, "cacheDuration"),
+    cache_duration_is_string: typeof providerBody?.cacheDuration === "string",
+    cache_duration_format_valid: typeof providerBody?.cacheDuration === "string" &&
+      /^(0|[1-9][0-9]*)(?:\.([0-9]{1,9}))?s$/u.test(providerBody.cacheDuration),
+  };
 
   response = await post("/api/login", {
     username: required.WATCH_DOG_JUDGE_USERNAME,

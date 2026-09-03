@@ -49,4 +49,5 @@ jobs:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
           WATCH_DOG_JUDGE_USERNAME: ${{ secrets.WATCH_DOG_JUDGE_USERNAME }}
           WATCH_DOG_JUDGE_PASSWORD: ${{ secrets.WATCH_DOG_JUDGE_PASSWORD }}
+          GOOGLE_SAFE_BROWSING_API_KEY: ${{ secrets.GOOGLE_SAFE_BROWSING_API_KEY }}
         run: node scripts/diagnose-live-path.mjs
