@@ -1,4 +1,6 @@
 import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { execFile as execFileCallback } from "node:child_process";
+import { promisify } from "node:util";
 import { chromium } from "playwright";
 
 class CaptureFailure extends Error {}
@@ -15,7 +17,9 @@ const base = new URL(required("WATCH_DOG_URL"));
 const expectedRevision = required("EXPECTED_SHA");
 const username = required("WATCH_DOG_JUDGE_USERNAME").trim();
 const password = required("WATCH_DOG_JUDGE_PASSWORD");
+const chromeExecutable = required("GOOGLE_CHROME_BIN");
 const outputDirectory = process.env.CAPTURE_OUTPUT ?? "recordings/production";
+const execFile = promisify(execFileCallback);
 
 if (base.protocol !== "https:" || base.pathname !== "/" || base.search || base.hash) {
   throw new CaptureFailure("invalid_capture_url");
@@ -26,15 +30,24 @@ if (!/^[a-f0-9]{40}$/u.test(expectedRevision) || username.length === 0) {
 
 await mkdir(outputDirectory, { recursive: true });
 
+const chromeVersionOutput = await execFile(chromeExecutable, ["--version"], {
+  encoding: "utf8", timeout: 10_000, maxBuffer: 1_024,
+});
+const installedMatch = /^Google Chrome(?: for Testing)? ([0-9]+(?:\.[0-9]+){3})\s*$/u
+  .exec(chromeVersionOutput.stdout);
+if (installedMatch === null) throw new CaptureFailure("unsupported_chrome_binary");
+const installedVersion = installedMatch[1];
+
 const browser = await chromium.launch({
   headless: true,
+  executablePath: chromeExecutable,
   args: ["--enable-experimental-web-platform-features"],
 });
 
 const version = browser.version();
 const major = Number.parseInt(version.split(".")[0] ?? "0", 10);
-if (!Number.isSafeInteger(major) || major < 149) {
-  throw new CaptureFailure("unsupported_chromium_version");
+if (!Number.isSafeInteger(major) || major < 149 || version !== installedVersion) {
+  throw new CaptureFailure("unsupported_chrome_version");
 }
 
 const pause = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -121,9 +134,18 @@ const evidence = {
   generated_at: new Date().toISOString(),
   production_url: base.href,
   revision: expectedRevision,
-  browser: { product: "Chromium", version, webmcp_minimum_met: true },
+  browser: {
+    product: "Google Chrome",
+    channel: "stable",
+    version,
+    installed_version: installedVersion,
+    explicit_installed_binary: true,
+    binary_path_preserved: false,
+    webmcp_minimum_met: true,
+  },
   authentication: "accepted_before_recording",
   credentials_or_cookies_preserved: false,
+  screenshots: ["watchdog-native-webmcp.png", "watchdog-paste-scan.png"],
   clips: {},
 };
 
@@ -142,7 +164,7 @@ await saveRecordedContext("02-live-scan", storageState, async (page) => {
   const before = await page.locator("#delayed-live-anchor").count();
   if (before !== 0) throw new CaptureFailure("delayed_anchor_present_at_initial_observation");
   await proof(page, "SUPPORTED BROWSER • REAL PRODUCTION", [
-    `Chromium ${version}`,
+    `Google Chrome ${version}`,
     "Native document.modelContext is available",
     `Deployed revision ${expectedRevision.slice(0, 12)}`,
     "Delayed anchor count at initial observation: 0",
@@ -240,6 +262,8 @@ await saveRecordedContext("02-live-scan", storageState, async (page) => {
     misleading_anchor_evidence: misleading,
     scan_id_preserved: false,
   };
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: `${outputDirectory}/watchdog-native-webmcp.png` });
 });
 
 await saveRecordedContext("03-paste-scan", storageState, async (page) => {
@@ -288,6 +312,8 @@ await saveRecordedContext("03-paste-scan", storageState, async (page) => {
     raw_input_preserved: false,
     scan_ids_preserved: false,
   };
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: `${outputDirectory}/watchdog-paste-scan.png` });
 });
 
 await browser.close();
