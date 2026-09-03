@@ -101,7 +101,7 @@ export async function deploymentTransition(options) {
   const { pr, head, checkOnly } = options;
   const run = options.run ?? defaultRun, sleep = options.sleep ??
     ((milliseconds) => new Promise((done) => setTimeout(done, milliseconds)));
-  run(["auth", "status", "--hostname", "github.com"]);
+  requireState(typeof run(["api", "user"])?.login === "string", "github_auth_failed");
   const repository = api(run, "", "GET");
   requireState(repository?.full_name === REPO && repository.default_branch === "main" &&
     repository.archived === false && repository.disabled === false, "repository_mismatch");
