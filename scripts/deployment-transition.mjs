@@ -33,7 +33,7 @@ function command(program, args) {
   try { return JSON.parse(result.stdout); } catch { throw new TransitionError("invalid_command_output"); }
 }
 const defaultRun = (args) => command("gh", args);
-const endpoint = (path) => ["api", `repos/${REPO}/${path}`];
+const endpoint = (path) => ["api", `repos/${REPO}${path === "" ? "" : `/${path}`}`];
 const api = (run, path, method, fields = []) => run([
   ...endpoint(path), ...(method === "GET" ? [] : ["--method", method]),
   ...fields.flatMap(([name, value]) => ["-f", `${name}=${value}`]),

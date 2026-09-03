@@ -14,7 +14,8 @@ function github(options = {}) {
     dispatchCalls: 0, refCreates: 0 };
   const run = (args) => {
     if (args[0] === "api" && args[1] === "user") return { login: "authenticated-user" };
-    const path = args[1].replace("repos/tyu41275/watch-dog/", "");
+    const root = "repos/tyu41275/watch-dog";
+    const path = args[1] === root ? "" : args[1].replace(`${root}/`, "");
     const method = args.includes("--method") ? args[args.indexOf("--method") + 1] : "GET";
     if (path === "") return { full_name: "tyu41275/watch-dog", default_branch: "main",
       archived: false, disabled: false };
