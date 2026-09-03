@@ -45,7 +45,7 @@ async function busy(control, action) {
   }
 }
 
-const consent = () => document.querySelector("#provider-consent")?.checked === true;
+const consent = () => { const input = document.querySelector("#provider-consent"); const granted = input?.checked === true; if (input !== null) input.checked = false; return granted; };
 const loginForm = document.querySelector("#login-form");
 loginForm?.addEventListener("submit", (event) => {
   event.preventDefault();

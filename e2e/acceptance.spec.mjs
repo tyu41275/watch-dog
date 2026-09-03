@@ -1,17 +1,13 @@
 import { test, expect } from "@playwright/test";
 import { runJourney } from "./journey.mjs";
-
 if (process.env.WD_CONTROLLED_FAILURE === "1") {
   test("controlled-artifact probe retains bounded failure evidence", async ({ page }) => {
     await page.goto("/");
-    await expect(page.locator("#results")).toHaveAttribute("data-controlled-probe", "present",
-      { timeout: 1_000 });
+    await expect(page.locator("#results")).toHaveAttribute("data-controlled-probe", "present", { timeout: 1_000 });
   });
 } else {
-  test("real Wrangler HTTPS preserves the complete session and browser journey", async ({ page }) => {
-    await runJourney(page, expect);
-  });
-
+  test("real Wrangler HTTPS preserves the complete session and browser journey", async ({ page }) =>
+    runJourney(page, expect));
   test("native partial registration aborts the shared tool scope atomically", async ({ page }) => {
   await page.addInitScript(() => {
     globalThis.__watchdogTools = [];

@@ -1,12 +1,10 @@
-import net from "node:net";
-import { writeFile } from "node:fs/promises";
-
+import net from "node:net"; import { writeFile } from "node:fs/promises";
 const allowedLine = "CONNECT watch.example:443 HTTP/1.1";
-
-export function startConnectTunnel({ host = "127.0.0.1", port = 9323,
-  upstreamHost = "127.0.0.1", upstreamPort = 8787, summaryPath } = {}) {
+const upstreamHost = "127.0.0.1"; const upstreamPort = 8787;
+export function startConnectTunnel({ host = "127.0.0.1", port = 9323, summaryPath } = {}) {
   const counters = { accepted_authorities: 0, rejected_authorities: 0,
-    backend_dials: 0, backend_failures: 0, retained_payload_bytes: 0 };
+    backend_dials: 0, backend_failures: 0, retained_payload_bytes: 0,
+    upstream_host: upstreamHost, upstream_port: upstreamPort };
   const sockets = new Set();
   const persist = async () => {
     if (summaryPath) await writeFile(summaryPath, `${JSON.stringify(counters, null, 2)}\n`);
@@ -55,7 +53,6 @@ export function startConnectTunnel({ host = "127.0.0.1", port = 9323,
     }));
   });
 }
-
 if (import.meta.url === `file://${process.argv[1]}`) {
   const tunnel = await startConnectTunnel({ summaryPath: process.env.WD_CONNECT_SUMMARY });
   const stop = async () => { await tunnel.close(); process.exit(0); };

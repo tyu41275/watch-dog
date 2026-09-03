@@ -6,10 +6,8 @@ import net from "node:net";
 import path from "node:path";
 import crypto from "node:crypto";
 import { auditTrace } from "./network-audit.mjs";
-
 const output = "/out"; const state = "/state";
 const children = new Set(); let stopping = false;
-
 function launch(command, args, name, env = {}) {
   const log = openSync(path.join(output, `${name}.log`), "a");
   const child = spawn(command, args, { cwd: env.WD_CWD, env: { ...process.env, ...env }, stdio: ["ignore", log, log],
@@ -17,7 +15,6 @@ function launch(command, args, name, env = {}) {
   closeSync(log); children.add(child); child.once("exit", () => { children.delete(child); });
   return child;
 }
-
 async function stop(child) {
   if (child.exitCode !== null || child.signalCode !== null) return;
   child.kill("SIGTERM");
@@ -25,12 +22,10 @@ async function stop(child) {
     new Promise((resolve) => setTimeout(resolve, 5_000))]);
   if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
 }
-
 async function stopAll() {
   if (stopping) return; stopping = true;
   await Promise.all([...children].map(stop));
 }
-
 function httpsGet(route) {
   return new Promise((resolve, reject) => {
     const request = https.get({ host: "127.0.0.1", port: 8787, path: route,
@@ -39,7 +34,6 @@ function httpsGet(route) {
     request.once("error", reject); request.setTimeout(1_000, () => request.destroy());
   });
 }
-
 async function ready() {
   const until = Date.now() + 30_000;
   while (Date.now() < until) {
@@ -48,7 +42,6 @@ async function ready() {
   }
   throw new Error("wrangler readiness timeout");
 }
-
 async function census(stage) {
   for (const entry of readdirSync("/proc").filter((value) => /^\d+$/u.test(value))) {
     try {
@@ -59,7 +52,6 @@ async function census(stage) {
     } catch {}
   }
 }
-
 function rejectedConnectProbe() {
   return new Promise((resolve, reject) => {
     const socket = net.createConnection({ host: "127.0.0.1", port: 9323 }); let data = "";
@@ -70,10 +62,16 @@ function rejectedConnectProbe() {
       new Error("connector rejection failed"))); socket.once("error", reject);
   });
 }
-
+function collectAttachments(value, found = []) {
+  if (Array.isArray(value)) for (const item of value) collectAttachments(item, found);
+  else if (value !== null && typeof value === "object") {
+    if (Array.isArray(value.attachments)) found.push(...value.attachments);
+    for (const child of Object.values(value)) collectAttachments(child, found);
+  }
+  return found;
+}
 process.once("SIGTERM", () => { void stopAll().finally(() => process.exit(143)); });
 process.once("SIGINT", () => { void stopAll().finally(() => process.exit(130)); });
-
 let result = "FAIL";
 try {
   await Promise.all(["home", "config", "cache", "data", "wrangler", "work"].map((name) =>
@@ -111,9 +109,17 @@ try {
   if (controlledCode === 0) throw new Error("controlled artifact probe unexpectedly passed");
   const artifactFiles = readdirSync("/out/controlled", { recursive: true, withFileTypes: true })
     .filter((entry) => entry.isFile()).map((entry) => path.join(entry.parentPath, entry.name));
-  if (!artifactFiles.some((file) => file.endsWith(".zip")) ||
-    !artifactFiles.some((file) => file.endsWith(".webm")) ||
-    artifactFiles.some((file) => !file.startsWith("/out/controlled/") || statSync(file).size > 20e6)) {
+  const requiredSuffixes = [".png", ".webm", ".zip", "error-context.md"];
+  const controlledReport = JSON.parse(readFileSync("/out/controlled-results.json"));
+  const attachments = collectAttachments(controlledReport);
+  const requiredTypes = ["image/png", "video/webm", "application/zip", "text/markdown"];
+  if (requiredSuffixes.some((suffix) => !artifactFiles.some((file) => file.endsWith(suffix))) ||
+    artifactFiles.some((file) => !file.startsWith("/out/controlled/") ||
+      statSync(file).size <= 0 || statSync(file).size > 20e6) ||
+    controlledReport.stats?.unexpected !== 1 || controlledReport.stats?.expected !== 0 ||
+    requiredTypes.some((type) => !attachments.some(({ contentType }) => contentType === type)) ||
+    attachments.some(({ path: file }) => typeof file !== "string" ||
+      !file.startsWith("/out/controlled/") || !artifactFiles.includes(file))) {
     throw new Error("controlled artifacts are missing or unbounded");
   }
   await census("post-tests");
@@ -126,7 +132,9 @@ try {
     summaryPath: path.join(output, "network-audit.json"), ignoredPids: readdirSync("/proc/self/task").map(Number) });
   if (report.verdict !== "PASS" || report.endpoints.some(({ port }) => port === 9444)) throw new Error("trace verdict failed");
   const connectorSummary = JSON.parse(readFileSync(path.join(output, "connect-summary.json")));
-  if (connectorSummary.rejected_authorities < 1 || connectorSummary.backend_dials < 1 ||
+  if (connectorSummary.rejected_authorities < 1 ||
+    connectorSummary.backend_dials !== connectorSummary.accepted_authorities ||
+    connectorSummary.upstream_host !== "127.0.0.1" || connectorSummary.upstream_port !== 8787 ||
     connectorSummary.backend_failures !== 0 || connectorSummary.retained_payload_bytes !== 0) {
     throw new Error("connector summary failed");
   }
@@ -136,5 +144,4 @@ try {
   await writeFile(path.join(output, "runtime-result.json"), `${JSON.stringify({ result,
     supervisor_pid: process.pid, completed_at: new Date().toISOString() })}\n`);
 }
-
 if (result !== "PASS") process.exitCode = 1;

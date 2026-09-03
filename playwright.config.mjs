@@ -1,5 +1,4 @@
 import { defineConfig } from "@playwright/test";
-
 export const chromiumControls = [
   "--proxy-server=http://127.0.0.1:9323",
   "--proxy-bypass-list=<-loopback>",
@@ -13,7 +12,6 @@ export const chromiumControls = [
   "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
   "--disable-features=AutofillServerCommunication,CertificateTransparencyComponentUpdater,DnsOverHttps,DnsOverHttpsUpgrade,MediaRouter,NetworkTimeServiceQuerying,OptimizationHints,OptimizationHintsFetching,SafeBrowsingRealTimeUrlLookupEnabled,UseDnsHttpsSvcbAlpn",
 ];
-
 export default defineConfig({
   testDir: "./e2e", testMatch: "acceptance.spec.mjs",
   workers: 1, retries: 0, timeout: 30_000, fullyParallel: false,

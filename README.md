@@ -45,11 +45,7 @@ Provider-specific terms, attribution, privacy, and failure semantics are in the
 
 ## Local browser harness
 
-The pinned Playwright harness exercises the real local Wrangler HTTPS Worker,
-authentication, Assets, Durable Object, session, scan, and WebMCP-registration
-seams in one networkless container. Its evidence is local-only and makes no
-deployment, supported-browser, provider, recording, audio, video, or submission
-claim. See [local browser verification](docs/browser-verification.md).
+The pinned Playwright harness exercises real local Wrangler HTTPS, authentication, Assets, Durable Objects, sessions, scans, and WebMCP registration in one networkless container. Its evidence is local-only and makes no deployment, provider, supported-browser, recording-publication, or submission claim. See [local browser verification](docs/browser-verification.md).
 
 ## Project status
 
