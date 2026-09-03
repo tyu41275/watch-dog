@@ -37,6 +37,7 @@ export interface Env {
   SESSION_SIGNING_KEY?: string;
   GOOGLE_SAFE_BROWSING_ENABLED?: string;
   GOOGLE_SAFE_BROWSING_API_KEY?: string;
+  BUILD_REVISION?: string;
   SESSION_COORDINATOR?: CoordinatorNamespace;
 }
 
@@ -303,6 +304,11 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
   const url = new URL(request.url);
   if (url.pathname === "/api/health" && request.method === "GET") {
     return json({ status: "ok", service: "watch-dog" });
+  }
+  if (url.pathname === "/api/revision" && request.method === "GET") {
+    return typeof env.BUILD_REVISION === "string" && /^[a-f0-9]{40}$/u.test(env.BUILD_REVISION)
+      ? json({ revision: env.BUILD_REVISION })
+      : json({ error: "revision_unavailable" }, 503);
   }
 
   if (url.pathname === "/api/login" && request.method === "POST") return login(request, env);

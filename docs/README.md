@@ -23,6 +23,7 @@ Paste Scan and Live Page Scan are equal product capabilities. Both feed one dete
 
 These documents capture time-bound launch requirements without defining the product itself:
 
+- [Exact deployment](deployment.md)
 - [Delivery plan](three-day-plan.md)
 - [Launch compliance](devpost-compliance.md)
 - [Demo script and resources](demo-script-and-resources.md)

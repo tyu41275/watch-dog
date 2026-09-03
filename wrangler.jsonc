@@ -3,6 +3,8 @@
   "name": "watch-dog",
   "main": "src/worker/index.ts",
   "compatibility_date": "2026-08-31",
+  "workers_dev": true,
+  "preview_urls": false,
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
