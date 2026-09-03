@@ -19,11 +19,27 @@ The workflow reads these repository secret names without exposing their values:
 
 1. Obtain independent Reviewer and QA PASS verdicts on the identical published PR head, tree, and base.
 2. Reauthenticate those refs, merge the PR without changing its accepted head, and keep the source branch until deployment completes.
-3. Dispatch the workflow from that source ref, substituting the accepted 40-character head for `SHA`:
+3. Derive the sole open PR's authenticated source ref and accepted head at execution time, verify the ref still names that head, merge with the head guard, prove the accepted head is now an ancestor of `main`, and dispatch the workflow from the retained source ref:
 
    ```sh
-   gh workflow run deploy.yml --repo tyu41275/watch-dog --ref agent/wd-p0-09-deploy-7196a94f -f expected_sha=SHA
+   REPO=tyu41275/watch-dog
+   PR="$(gh pr list --repo "$REPO" --state open --base main --json number \
+     --jq 'if length == 1 then .[0].number else error("expected one open PR") end')"
+   REF="$(gh pr view "$PR" --repo "$REPO" --json headRefName --jq .headRefName)"
+   SHA="$(gh pr view "$PR" --repo "$REPO" --json headRefOid --jq .headRefOid)"
+   BASE="$(gh pr view "$PR" --repo "$REPO" --json baseRefOid --jq .baseRefOid)"
+   test "$(git ls-remote "git@github.com:$REPO.git" "refs/heads/$REF" | cut -f1)" = "$SHA"
+   test "$(gh pr view "$PR" --repo "$REPO" --json baseRefName --jq .baseRefName)" = main
+   test "$(git ls-remote "git@github.com:$REPO.git" refs/heads/main | cut -f1)" = "$BASE"
+   gh pr merge "$PR" --repo "$REPO" --merge --match-head-commit "$SHA"
+   git fetch --no-tags "git@github.com:$REPO.git" \
+     "+refs/heads/main:refs/remotes/origin/main"
+   git merge-base --is-ancestor "$SHA" refs/remotes/origin/main
+   test "$(git ls-remote "git@github.com:$REPO.git" "refs/heads/$REF" | cut -f1)" = "$SHA"
+   gh workflow run deploy.yml --repo "$REPO" --ref "$REF" -f expected_sha="$SHA"
    ```
+
+   Do not delete the source branch until the workflow and live acceptance complete successfully.
 
 4. Authenticate the resulting run's event, head SHA, conclusion, and artifact digest before publishing its sanitized receipt. Do not publish runner logs, secret values, credential inputs, cookie/CSRF values, raw provider bodies, or probe targets.
 

@@ -191,7 +191,7 @@ async function main() {
   check(missingCsrf.status === 401 && (await json(missingCsrf, "csrf"))?.error === "unauthorized",
     "csrf_denial_failed");
 
-  const publicControl = new URL(`https://${["example", "com"].join(".")}/`).href;
+  const publicControl = new URL("https://httpbingo.org/html").href;
   const publicReceipt = await scanUrl(first, publicControl);
   check(publicReceipt.accepted_targets > 0 && publicReceipt.unscannable_reason === null &&
     Array.isArray(publicReceipt.fetch_evidence?.validated_hops) &&
