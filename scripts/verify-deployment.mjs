@@ -83,7 +83,8 @@ async function logout(session) {
 
 async function main() {
   base = new URL(required("DEPLOYED_URL")); revision = required("EXPECTED_SHA");
-  username = required("WATCH_DOG_JUDGE_USERNAME"); password = required("WATCH_DOG_JUDGE_PASSWORD");
+  username = required("WATCH_DOG_JUDGE_USERNAME").trim(); password = required("WATCH_DOG_JUDGE_PASSWORD");
+  check(username.length > 0, "empty_watch_dog_judge_username");
   evidencePath = required("EVIDENCE_PATH"); deploymentId = required("DEPLOYMENT_ID_REDACTED");
   check(base.protocol === "https:" && base.pathname === "/" && base.search === "" &&
     base.hash === "" && base.hostname.endsWith(".workers.dev"), "invalid_deployment_surface");

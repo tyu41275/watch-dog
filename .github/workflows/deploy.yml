@@ -7,6 +7,11 @@ on:
         description: Exact reviewed and merged GitHub commit to deploy
         required: true
         type: string
+      capture_demo:
+        description: Record sanitized production Paste Scan and native WebMCP footage
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -51,7 +56,12 @@ jobs:
           npm run typecheck
           npm test
           npm run build
-          npm audit --audit-level=high
+          audit_ok=false
+          for attempt in 1 2 3; do
+            if npm audit --audit-level=high; then audit_ok=true; break; fi
+            test "$attempt" -eq 3 || sleep "$((attempt * 10))"
+          done
+          test "$audit_ok" = true
           node scripts/verify-public-control.mjs
           npx wrangler deploy --dry-run --outdir "$RUNNER_TEMP/wrangler-dry-run" --var "BUILD_REVISION:$EXPECTED_SHA" --var "GOOGLE_SAFE_BROWSING_ENABLED:true"
           test -z "$(git status --porcelain)"
@@ -80,9 +90,28 @@ jobs:
           WATCH_DOG_PROVIDER_CONSENT: "true"
           EVIDENCE_PATH: ${{ runner.temp }}/watch-dog-deployment-evidence.json
         run: node scripts/verify-deployment.mjs
+      - name: Install supported Chromium for production capture
+        if: ${{ inputs.capture_demo }}
+        run: npx playwright install --with-deps chromium
+      - name: Capture authenticated production demo
+        if: ${{ inputs.capture_demo }}
+        env:
+          WATCH_DOG_URL: ${{ steps.deploy.outputs.url }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          WATCH_DOG_JUDGE_USERNAME: ${{ secrets.WATCH_DOG_JUDGE_USERNAME }}
+          WATCH_DOG_JUDGE_PASSWORD: ${{ secrets.WATCH_DOG_JUDGE_PASSWORD }}
+          CAPTURE_OUTPUT: ${{ runner.temp }}/watch-dog-production-capture
+        run: node scripts/capture-production-demo.mjs
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: watch-dog-deployment-${{ inputs.expected_sha }}
           path: ${{ runner.temp }}/watch-dog-deployment-evidence.json
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ inputs.capture_demo }}
+        with:
+          name: watch-dog-production-capture-${{ inputs.expected_sha }}
+          path: ${{ runner.temp }}/watch-dog-production-capture
           if-no-files-found: error
           retention-days: 30
