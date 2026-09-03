@@ -101,7 +101,7 @@ jobs:
           chrome_bin="$(command -v google-chrome || command -v google-chrome-stable)"
           test -x "$chrome_bin"
           chrome_version="$("$chrome_bin" --version)"
-          [[ "$chrome_version" =~ ^Google\ Chrome(\ for\ Testing)?\ ([0-9]+\.){3}[0-9]+$ ]]
+          [[ "$chrome_version" =~ ^Google\ Chrome(\ for\ Testing)?\ ([0-9]+\.){3}[0-9]+[[:space:]]*$ ]]
           echo "GOOGLE_CHROME_BIN=$chrome_bin" >> "$GITHUB_ENV"
       - name: Capture authenticated production demo
         if: ${{ always() && inputs.capture_demo && steps.deploy.outcome == 'success' }}
