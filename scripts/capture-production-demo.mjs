@@ -139,17 +139,19 @@ await saveRecordedContext("02-live-scan", storageState, async (page) => {
       !native.methods.includes("executeTool")) {
     throw new CaptureFailure("native_webmcp_unavailable");
   }
+  const before = await page.locator("#delayed-live-anchor").count();
+  if (before !== 0) throw new CaptureFailure("delayed_anchor_present_at_initial_observation");
   await proof(page, "SUPPORTED BROWSER • REAL PRODUCTION", [
     `Chromium ${version}`,
     "Native document.modelContext is available",
     `Deployed revision ${expectedRevision.slice(0, 12)}`,
+    "Delayed anchor count at initial observation: 0",
   ], "success");
   await pause(2_500);
 
-  const before = await page.locator("#delayed-live-anchor").count();
   await proof(page, "INVOCATION-TIME DOM", [
-    `Delayed anchor count before insertion: ${before}`,
-    "Waiting for the page's post-load DOM mutation…",
+    `Delayed anchor count at page load: ${before}`,
+    "Reading the current DOM after the post-load mutation…",
   ]);
   await page.locator("#delayed-live-anchor").waitFor({ state: "attached", timeout: 10_000 });
   await page.locator("#delayed-live-anchor").evaluate((anchor) =>
@@ -195,7 +197,7 @@ await saveRecordedContext("02-live-scan", storageState, async (page) => {
   const delayed = inspect?.targets?.some(({ canonical_url: target }) =>
     typeof target === "string" && target.endsWith("/delayed-evidence"));
   const misleading = inspect?.results?.some(({ supporting_evidence: items }) =>
-    Array.isArray(items) && items.some(({ category }) => category === "misleading_anchor_text"));
+    Array.isArray(items) && items.some(({ category }) => category === "misleading_url_like_text"));
   if (!/^[a-f0-9]{32}$/u.test(scanId ?? "") || !delayed || !misleading) {
     throw new CaptureFailure("native_inspect_evidence_incomplete");
   }
@@ -204,7 +206,7 @@ await saveRecordedContext("02-live-scan", storageState, async (page) => {
     `Accepted targets: ${inspect.accepted_targets}`,
     `Rejected candidates: ${inspect.rejected_candidates}`,
     "✓ delayed-evidence found in the rendered DOM",
-    "✓ misleading_anchor_text evidence returned",
+    "✓ misleading_url_like_text evidence returned",
   ], "success");
   await pause(7_000);
 
