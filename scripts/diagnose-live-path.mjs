@@ -158,8 +158,23 @@ try {
       : /API key not valid|API_KEY_INVALID/iu.test(providerBody.error.message) ? "api_key_invalid"
       : /API has not been used|is disabled/iu.test(providerBody.error.message) ? "api_disabled"
       : /invalid argument|invalid value/iu.test(providerBody.error.message) ? "invalid_argument"
+      : /unknown[^\n]{0,80}(?:alt|parameter)|(?:alt|parameter)[^\n]{0,80}unknown/iu.test(providerBody.error.message)
+        ? "unknown_parameter"
+      : /(?:url|urls)[^\n]{0,80}(?:invalid|required|missing)|(?:invalid|required|missing)[^\n]{0,80}(?:url|urls)/iu.test(providerBody.error.message)
+        ? "url_parameter"
       : /quota|rate limit/iu.test(providerBody.error.message) ? "quota"
       : "other",
+    error_details: Array.isArray(providerBody?.error?.details)
+      ? providerBody.error.details.slice(0, 4).map((detail) => ({
+        type: typeof detail?.["@type"] === "string" && /^type\.googleapis\.com\/[A-Za-z0-9_.]{1,100}$/u.test(detail["@type"])
+          ? detail["@type"] : null,
+        reason: typeof detail?.reason === "string" && /^[A-Z0-9_]{1,80}$/u.test(detail.reason)
+          ? detail.reason : null,
+        field_violations: Array.isArray(detail?.fieldViolations)
+          ? detail.fieldViolations.slice(0, 8).map((violation) =>
+            typeof violation?.field === "string" && /^[A-Za-z0-9_.$\[\]-]{1,100}$/u.test(violation.field)
+              ? violation.field : null) : [],
+      })) : [],
   };
 
   response = await post("/api/login", {
