@@ -15,8 +15,9 @@
   },
   "devDependencies": {
     "@playwright/test": "1.62.1",
-    "wrangler": "4.127.1",
-    "typescript": "7.0.2"
+    "@types/node": "24.13.3",
+    "typescript": "7.0.2",
+    "wrangler": "4.127.1"
   },
   "engines": {
     "node": ">=22"

@@ -1,3 +1,4 @@
+import { resolve4, resolve6 } from "node:dns/promises";
 import type { UnscannableReason } from "../../shared/canonicalize.js";
 import { addressFamily, type AddressResolver } from "./address.js";
 import {
@@ -12,7 +13,6 @@ export const SAFE_FETCH_LIMITS = {
   max_response_bytes: 200_000,
   per_operation_ms: 3_000,
   total_ms: 8_000,
-  max_dns_response_bytes: 16_384,
 } as const;
 
 export interface SafeFetchEvidence {
@@ -29,78 +29,69 @@ export type SafeFetchResult =
 export interface SafeFetchSeams {
   fetcher?: Fetcher;
   resolver?: AddressResolver;
+  dns?: WorkersDnsApi;
   now?: () => number;
   operation_ms?: number;
   total_ms?: number;
   record?: (entry: JournalEntry) => void;
 }
 
-interface DnsJson {
-  Status?: unknown;
-  TC?: unknown;
-  Answer?: unknown;
+export interface WorkersDnsApi {
+  resolve4(hostname: string): Promise<readonly string[]>;
+  resolve6(hostname: string): Promise<readonly string[]>;
 }
 
-async function dnsQuery(
+const nativeWorkersDns: WorkersDnsApi = { resolve4, resolve6 };
+const EMPTY_FAMILY_CODES = new Set(["ENODATA", "ENOTFOUND"]);
+
+function dnsErrorCode(error: unknown): string | null {
+  if (typeof error !== "object" || error === null || !("code" in error)) return null;
+  return typeof error.code === "string" ? error.code : null;
+}
+
+async function resolveFamily(
+  query: (hostname: string) => Promise<readonly string[]>,
   hostname: string,
-  type: "A" | "AAAA",
-  scope: ReturnType<typeof createResponseScope>,
-  deadline: number,
-): Promise<string[]> {
-  const url = `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(hostname)}&type=${type}`;
-  const acquired = await scope.request(url, {
-    headers: { accept: "application/dns-json" },
-    redirect: "error",
-  }, deadline);
-  if (!acquired.ok) throw new DOMException(acquired.failure, acquired.failure === "timeout" || acquired.failure === "sealed" ? "AbortError" : "NetworkError");
-  const metadata = scope.metadata(acquired.handle, { "content-type": 256, "content-encoding": 128, "content-length": 32 });
-  if (!metadata.ok) throw new TypeError("dns response unavailable");
-  const mediaType = metadata.headers["content-type"]?.value?.split(";", 1)[0]?.trim().toLowerCase();
-  const encoding = metadata.headers["content-encoding"]?.value?.trim().toLowerCase();
-  const declared = metadata.headers["content-length"];
-  const declaredSize = declared?.value === null || declared?.value === undefined ? null : Number(declared.value);
-  if (metadata.status < 200 || metadata.status >= 300 || mediaType !== "application/dns-json" || metadata.headers["content-type"]?.overflow || metadata.headers["content-encoding"]?.overflow || declared?.overflow || (declaredSize !== null && (!Number.isSafeInteger(declaredSize) || declaredSize < 0)) || (encoding !== undefined && encoding !== "" && encoding !== "identity")) { scope.discard(metadata.handle); throw new TypeError("dns response unavailable"); }
-  if (declaredSize !== null && declaredSize > SAFE_FETCH_LIMITS.max_dns_response_bytes) { scope.discard(metadata.handle); throw new RangeError("body limit exceeded"); }
-  const read = await scope.read(metadata.handle, SAFE_FETCH_LIMITS.max_dns_response_bytes, deadline);
-  if (!read.ok) throw read.failure === "limit" ? new RangeError("body limit exceeded") : new DOMException(read.failure, read.failure === "timeout" ? "AbortError" : "DataError");
-  const body = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(read.bytes)) as DnsJson;
-  if (body.Status !== 0 || typeof body.TC !== "boolean" || body.TC || (body.Answer !== undefined && !Array.isArray(body.Answer))) throw new TypeError("dns response invalid");
-  if (body.Answer === undefined) return [];
-  if (body.Answer.length > 64) throw new TypeError("dns answer limit exceeded");
-  const recordType = type === "A" ? 1 : 28;
-  const addresses: string[] = []; for (const record of body.Answer) {
-    const value = typeof record === "object" && record !== null ? record as { type?: unknown; data?: unknown } : null;
-    if (value === null || !Number.isInteger(value.type) || typeof value.data !== "string") throw new TypeError("dns response invalid");
-    const family = addressFamily(value.data);
-    if ((value.type === 1 && family !== 4) || (value.type === 28 && family !== 6)) throw new TypeError("dns response invalid");
-    if (value.type === recordType) addresses.push(value.data);
+  family: 4 | 6,
+): Promise<readonly string[]> {
+  let addresses: readonly string[];
+  try { addresses = await query(hostname); }
+  catch (error) {
+    if (EMPTY_FAMILY_CODES.has(dnsErrorCode(error) ?? "")) return [];
+    throw error;
+  }
+  if (addresses.some((address) => addressFamily(address) !== family)) {
+    throw new TypeError("dns response invalid");
   }
   return addresses;
 }
 
-export function createCloudflareDohResolver(
-  fetcher: Fetcher = (input, init) => fetch(input, init),
-): AddressResolver {
+/** Cloudflare Workers' supported node:dns path; the signal bounds its caller. */
+export function createWorkersDnsResolver(dns: WorkersDnsApi = nativeWorkersDns): AddressResolver {
   return async (hostname, signal) => {
-    const scope = createResponseScope(fetcher);
-    const abort = () => { scope.seal(); };
-    signal.addEventListener("abort", abort, { once: true });
-    if (signal.aborted) scope.seal();
-    try {
-      const [v4, v6] = await Promise.all([
-        dnsQuery(hostname, "A", scope, Number.POSITIVE_INFINITY),
-        dnsQuery(hostname, "AAAA", scope, Number.POSITIVE_INFINITY),
-      ]);
-      if (v4.length + v6.length > 32) throw new TypeError("dns answer limit exceeded");
-      return [...v4, ...v6];
-    } finally {
-      signal.removeEventListener("abort", abort);
-      scope.seal();
-    }
+    if (signal.aborted) throw new DOMException("aborted", "AbortError");
+    const pending = Promise.all([
+      resolveFamily(dns.resolve4.bind(dns), hostname, 4),
+      resolveFamily(dns.resolve6.bind(dns), hostname, 6),
+    ]).then(([v4, v6]) => [...v4, ...v6]);
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (run: () => void) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", abort);
+        run();
+      };
+      const abort = () => finish(() => reject(new DOMException("aborted", "AbortError")));
+      signal.addEventListener("abort", abort, { once: true });
+      if (signal.aborted) abort();
+      void pending.then(
+        (addresses) => finish(() => resolve(addresses)),
+        (error) => finish(() => reject(error)),
+      );
+    });
   };
 }
-
-export const cloudflareDohResolver = createCloudflareDohResolver();
 
 async function operation<T>(
   run: (signal: AbortSignal) => Promise<T>,
@@ -133,6 +124,7 @@ export async function safeFetchHtml(
   seams: SafeFetchSeams = {},
 ): Promise<SafeFetchResult> {
   const fetcher = seams.fetcher ?? ((input, init) => fetch(input, init));
+  const resolver = seams.resolver ?? createWorkersDnsResolver(seams.dns);
   const now = seams.now ?? Date.now;
   const started = now();
   const scope = createResponseScope(fetcher, now);
@@ -147,11 +139,7 @@ export async function safeFetchHtml(
       if (effect.kind === "dns") {
         let addresses: string[] = []; let failure: "timeout" | "network_error" | null = null;
         try {
-          if (seams.resolver !== undefined) addresses = [...await operation((signal) => seams.resolver!(effect.hostname, signal), Math.max(0, effect.deadline! - effect.issued_at))];
-          else {
-            const values = await Promise.all([dnsQuery(effect.hostname, "A", scope, effect.deadline!), dnsQuery(effect.hostname, "AAAA", scope, effect.deadline!)]);
-            addresses = [...values[0], ...values[1]];
-          }
+          addresses = [...await operation((signal) => resolver(effect.hostname, signal), Math.max(0, effect.deadline! - effect.issued_at))];
         } catch (error) { failure = error instanceof DOMException && error.name === "AbortError" ? "timeout" : "network_error"; }
         const overflow = addresses.length > 32;
         fact = { kind: "dns", completed_at: now(), addresses: addresses.slice(0, 33), overflow, failure };
