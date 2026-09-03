@@ -43,6 +43,10 @@ See the [threat model](docs/threat-model.md) for the complete security boundary.
 Provider-specific terms, attribution, privacy, and failure semantics are in the
 [Google Safe Browsing integration note](docs/google-safe-browsing.md).
 
+## Local browser harness
+
+The pinned Playwright harness exercises real local Wrangler HTTPS, authentication, Assets, Durable Objects, sessions, scans, and WebMCP registration in one networkless container. Its evidence is local-only and makes no deployment, provider, supported-browser, recording-publication, or submission claim. See [local browser verification](docs/browser-verification.md).
+
 ## Project status
 
 Watch Dog is currently pre-release. This repository contains the approved product architecture, security requirements, and acceptance criteria; application implementation is tracked in [issue #1](https://github.com/tyu41275/watch-dog/issues/1).
@@ -56,6 +60,7 @@ The project is licensed under the [Apache License 2.0](LICENSE).
 - [Threat model](docs/threat-model.md)
 - [Google Safe Browsing integration](docs/google-safe-browsing.md)
 - [Acceptance criteria](docs/acceptance-criteria.md)
+- [Local browser verification](docs/browser-verification.md)
 - [Glossary](docs/glossary.md)
 - [Documentation index](docs/README.md)
 

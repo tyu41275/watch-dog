@@ -24,6 +24,8 @@ __pycache__/
 data/local/
 artifacts/
 recordings/
+test-results/
+playwright-report/
 
 # Editors and operating systems
 .DS_Store

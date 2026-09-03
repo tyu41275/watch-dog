@@ -1,0 +1,23 @@
+FROM mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e
+ADD --checksum=sha256:d588810ae26b06fee6678dc81e5b54f6efcde8e718e4589adb4d11d254b9820b https://archive.ubuntu.com/ubuntu/pool/main/s/strace/strace_6.8-0ubuntu2_amd64.deb /tmp/strace.deb
+RUN dpkg -i /tmp/strace.deb && rm /tmp/strace.deb
+WORKDIR /work
+COPY package.json package-lock.json ./
+RUN npm ci --ignore-scripts --no-audit --no-fund \
+ && npm cache clean --force
+COPY . .
+RUN npm run build \
+ && test "$(node -p "require('./node_modules/wrangler/package.json').version")" = 4.127.1 \
+ && test "$(node -p "require('./node_modules/@playwright/test/package.json').version")" = 1.62.1 \
+ && test -x /ms-playwright/chromium-*/chrome-linux64/chrome \
+ && test "$(dpkg-query -W -f='${Version}' strace)" = "6.8-0ubuntu2"
+LABEL io.watchdog.task="9c7eb392" \
+      io.watchdog.node="WD22-LB1" \
+      io.watchdog.round="r0" \
+      io.watchdog.invocation="wd22-9c7eb392-lb1-r0" \
+      io.watchdog.resource="WD22-S-R010"
+USER 10001:10001
+ENV CI=1 HOME=/state/home XDG_CONFIG_HOME=/state/config XDG_CACHE_HOME=/state/cache \
+    XDG_STATE_HOME=/state/data WRANGLER_DISABLE_UPDATE_CHECK=true \
+    WRANGLER_SEND_METRICS=false PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+ENTRYPOINT ["/usr/bin/strace", "-ff", "-ttt", "-yy", "-s", "64", "-e", "trace=clone,clone3,fork,vfork,execve,exit,exit_group,socket,socketpair,connect,bind,listen,accept,accept4,getsockname,getpeername,sendto,sendmsg,sendmmsg,recvfrom,recvmsg,shutdown,close", "-o", "/out/raw-trace/trace", "/usr/bin/node", "e2e/runtime-supervisor.mjs"]

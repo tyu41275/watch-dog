@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "npm run check:protocol && tsc",
+    "browser:acceptance": "playwright test --config=playwright.config.mjs",
+    "browser:record": "playwright test --config=playwright.recording.config.mjs",
     "check:protocol": "node scripts/sync-protocol.mjs --check",
     "dev": "npx --yes wrangler@4.127.1 dev",
     "sync:protocol": "node scripts/sync-protocol.mjs",
@@ -12,6 +14,8 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "wrangler": "4.127.1",
     "typescript": "7.0.2"
   },
   "engines": {
