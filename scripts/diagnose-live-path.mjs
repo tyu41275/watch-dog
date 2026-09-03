@@ -121,7 +121,7 @@ try {
   evidence.health = { status: response.status, ok: response.status === 200 && body?.status === "ok" };
 
   const providerUrl = new URL("https://safebrowsing.googleapis.com/v5/urls:search");
-  providerUrl.searchParams.set("alt", "json");
+  providerUrl.searchParams.set("$alt", "json");
   providerUrl.searchParams.append("urls", "https://httpbin.org/links/3/1");
   response = await fetch(providerUrl, {
     method: "GET",
