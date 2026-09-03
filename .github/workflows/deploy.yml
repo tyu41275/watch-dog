@@ -58,7 +58,10 @@ jobs:
           npm run build
           audit_ok=false
           for attempt in 1 2 3; do
-            if npm audit --audit-level=high; then audit_ok=true; break; fi
+            if npm_config_fetch_timeout=30000 npm audit --audit-level=high; then
+              audit_ok=true
+              break
+            fi
             test "$attempt" -eq 3 || sleep "$((attempt * 10))"
           done
           test "$audit_ok" = true
@@ -91,10 +94,10 @@ jobs:
           EVIDENCE_PATH: ${{ runner.temp }}/watch-dog-deployment-evidence.json
         run: node scripts/verify-deployment.mjs
       - name: Install supported Chromium for production capture
-        if: ${{ inputs.capture_demo }}
+        if: ${{ always() && inputs.capture_demo && steps.deploy.outcome == 'success' }}
         run: npx playwright install --with-deps chromium
       - name: Capture authenticated production demo
-        if: ${{ inputs.capture_demo }}
+        if: ${{ always() && inputs.capture_demo && steps.deploy.outcome == 'success' }}
         env:
           WATCH_DOG_URL: ${{ steps.deploy.outputs.url }}
           EXPECTED_SHA: ${{ inputs.expected_sha }}
@@ -109,7 +112,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: ${{ inputs.capture_demo }}
+        if: ${{ always() && inputs.capture_demo && steps.deploy.outcome == 'success' }}
         with:
           name: watch-dog-production-capture-${{ inputs.expected_sha }}
           path: ${{ runner.temp }}/watch-dog-production-capture
