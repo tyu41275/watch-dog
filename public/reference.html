@@ -5,7 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="referrer" content="no-referrer">
     <title>Watch Dog Live Page Scan</title>
-    <script type="module" src="/webmcp.js"></script>
+    <link rel="stylesheet" href="/styles.css">
+    <script type="module" src="/app.js"></script>
     <script type="module" src="/live-page.js"></script>
   </head>
   <body>
@@ -21,7 +22,23 @@
         <li><a href="https://accounts.example.invalid/login">https://accounts.example.com/login</a></li>
       </ul>
       <p id="delayed-status" aria-live="polite">The delayed rendered anchor has not been inserted yet.</p>
+      <section id="login-panel">
+        <h2>Judge sign in</h2>
+        <form id="login-form">
+          <label>Username <input name="username" autocomplete="username" required></label>
+          <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+          <button type="submit">Sign in</button>
+        </form>
+      </section>
+      <section id="scan-panel" hidden>
+        <button id="logout" type="button">Sign out</button>
+        <label class="consent"><input id="provider-consent" type="checkbox">
+          Allow this invocation to disclose canonical target URLs to Google Safe Browsing.</label>
+        <button id="inspect-page" type="button">Inspect current rendered anchors</button>
+      </section>
+      <p id="app-status" aria-live="polite">Initializing session…</p>
       <p id="webmcp-status" aria-live="polite">Checking WebMCP support…</p>
+      <pre id="results" hidden aria-live="polite"></pre>
       <p>Arbitrary third-party active-tab inspection requires a future extension with explicit permissions.</p>
     </main>
   </body>
