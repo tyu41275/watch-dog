@@ -5,6 +5,8 @@ const WORKER_NAME = "watch-dog";
 const ALLOWED_CLASSIFICATIONS = new Set([
   "AUTHENTICATION_OR_ACCOUNT_MISMATCH",
   "WORKER_ABSENCE",
+  "WORKER_ABSENCE_SUBDOMAIN_READY",
+  "WORKER_ABSENCE_BOOTSTRAP_REQUIRED",
   "STRICT_REMOTE_API_CONFIGURATION_DRIFT",
   "STRICT_REMOTE_DASHBOARD_CONFIGURATION_DRIFT",
   "LOCAL_BINDING_OR_VARIABLE_COLLIDES_WITH_REMOTE_SECRET",
@@ -33,6 +35,8 @@ const evidence = {
   token_verified_active: false,
   account_worker_list_readable: false,
   worker_exists: false,
+  workers_dev_subdomain_registered: false,
+  workers_dev_subdomain_absent: false,
   worker_source_api: false,
   worker_source_dashboard: false,
   remote_metadata_complete: false,
@@ -136,6 +140,10 @@ async function apiGet(path) {
     if (response.status === 404) {
       counts.not_found += 1;
       return { kind: "not_found" };
+    }
+    if (body?.errors?.some((error) => error?.code === 10007)) {
+      counts.not_found += 1;
+      return { kind: "workers_dev_subdomain_absent" };
     }
     counts.failed += 1;
     return { kind: "failed" };
@@ -265,13 +273,37 @@ async function main() {
   );
   if (classifyApiRead(service)) return;
   if (service.kind === "not_found") {
-    classification = evidence.account_worker_list_readable
-      ? "WORKER_ABSENCE"
-      : "AUTHENTICATION_OR_ACCOUNT_MISMATCH";
-    remediation = evidence.account_worker_list_readable
-      ? "AMEND_REDISPATCH_FOR_AUTHORIZED_FIRST_WORKER_CREATION"
-      : "REALIGN_GITHUB_CLOUDFLARE_ACCOUNT_ID";
-    uncertainty = "NONE";
+    if (!evidence.account_worker_list_readable) {
+      classification = "AUTHENTICATION_OR_ACCOUNT_MISMATCH";
+      remediation = "REALIGN_GITHUB_CLOUDFLARE_ACCOUNT_ID";
+      uncertainty = "ACCOUNT_WORKER_LIST_UNREADABLE";
+      return;
+    }
+
+    const subdomain = await apiGet(
+      `/client/v4/accounts/${encodedAccount}/workers/subdomain`,
+    );
+    if (classifyApiRead(subdomain)) return;
+    if (subdomain.kind === "ok") {
+      evidence.workers_dev_subdomain_registered = true;
+      classification = "WORKER_ABSENCE_SUBDOMAIN_READY";
+      remediation = "VERIFY_WORKERS_SCRIPTS_EDIT_AUTHORITY_BEFORE_FIRST_CREATE";
+      uncertainty = "WRITE_SCOPE_OR_UPLOAD_PHASE_UNOBSERVED";
+      return;
+    }
+    if (
+      subdomain.kind === "workers_dev_subdomain_absent" ||
+      subdomain.kind === "not_found"
+    ) {
+      evidence.workers_dev_subdomain_absent = true;
+      classification = "WORKER_ABSENCE_BOOTSTRAP_REQUIRED";
+      remediation = "REGISTER_ACCOUNT_WORKERS_DEV_SUBDOMAIN_BEFORE_FIRST_CREATE";
+      uncertainty = "ORIGINAL_PRIVATE_LOG_UNRECOVERABLE;MISSING_SUBDOMAIN_IS_DETERMINISTIC_PREUPLOAD_BLOCKER";
+      return;
+    }
+    classification = "INCONCLUSIVE_SAFE_READ";
+    remediation = "RETRY_READ_ONLY_WORKERS_DEV_SUBDOMAIN_CHECK";
+    uncertainty = "WORKERS_DEV_SUBDOMAIN_STATE_UNREADABLE";
     return;
   }
   if (service.kind !== "ok") {
