@@ -49,6 +49,19 @@ test("the exported Worker entrypoint serves health without secrets", async () =>
   assert.deepEqual(await response.json(), { status: "ok", service: "watch-dog" });
 });
 
+test("revision is exact and fails closed when its binding is absent or malformed", async () => {
+  const request = new Request("https://example.test/api/revision");
+  for (const BUILD_REVISION of [undefined, "ABC", "a".repeat(39), "g".repeat(40)]) {
+    const response = await worker.fetch(request.clone(), { BUILD_REVISION });
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), { error: "revision_unavailable" });
+  }
+  const revision = "1".repeat(40);
+  const response = await worker.fetch(request, { BUILD_REVISION: revision });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { revision });
+});
+
 test("the real entrypoint fails closed for unimplemented API routes", async () => {
   const response = await worker.fetch(new Request("https://example.test/api/scans", { method: "POST" }), {});
   assert.equal(response.status, 503);
