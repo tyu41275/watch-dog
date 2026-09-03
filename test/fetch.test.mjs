@@ -3,14 +3,13 @@ import test from "node:test";
 import { FETCH_REJECTION_REASONS } from "../dist/shared/canonicalize.js";
 import { admitPublicHost, isPublicAddress } from "../dist/worker/fetch/address.js";
 import { PASTE_LIMITS, executePasteScan, parsePasteRequest } from "../dist/worker/fetch/paste.js";
-import { SAFE_FETCH_LIMITS, createCloudflareDohResolver, safeFetchHtml } from "../dist/worker/fetch/safe-fetch.js";
+import { SAFE_FETCH_LIMITS, createWorkersDnsResolver, safeFetchHtml } from "../dist/worker/fetch/safe-fetch.js";
 import { replayFetchMachine } from "../dist/worker/fetch/fetch-machine.js";
 import { createResponseScope } from "../dist/worker/fetch/response-scope.js";
 import { CoordinatorCore } from "../dist/worker/coordinator.js";
 import { extractHtmlScanAtoms } from "../dist/shared/extract-html.js";
 const PUBLIC_ADDRESSES = ["93.184.216.34", "2606:4700:4700::1111"];
 const publicResolver = async () => PUBLIC_ADDRESSES;
-const dnsJson = (body, headers = { "content-type": "application/dns-json" }) => new Response(JSON.stringify(body), { headers });
 const commit = (operation) => {
   const core = new CoordinatorCore();
   const receipt = core.commitPaste("s".repeat(32), operation.input, operation.journal, 0);
@@ -61,44 +60,48 @@ test("fetch rejection reasons are a closed literal vocabulary", () => {
     "fetch_failed", "invalid_response", "input_too_large", "no_candidates",
   ]);
 });
-test("Cloudflare DoH resolver bounds and extracts only A and AAAA answers", async () => {
-  const calls = [];
-  const resolver = createCloudflareDohResolver(async (url, init) => {
-    calls.push({ url, init });
-    const v6 = url.includes("type=AAAA");
-    return dnsJson({ Status: 0, TC: false, Answer: v6
-        ? [{ type: 5, data: "alias.example." }, { type: 28, data: PUBLIC_ADDRESSES[1] }]
-        : [{ type: 1, data: PUBLIC_ADDRESSES[0] }],
-    });
+test("production Workers DNS path resolves A and AAAA with bounded deterministic seams", async () => {
+  const queries = [];
+  const dns = {
+    async resolve4(hostname) { queries.push([hostname, 4]); return [PUBLIC_ADDRESSES[0]]; },
+    async resolve6(hostname) { queries.push([hostname, 6]); return [PUBLIC_ADDRESSES[1]]; },
+  };
+  const journal = [];
+  const result = await safeFetchHtml("https://public.example.co/", {
+    dns, now: () => 0, record: (entry) => journal.push(entry),
+    fetcher: async () => new Response("safe", { headers: { "content-type": "text/html" } }),
   });
-  const addresses = await resolver("public.example.co", new AbortController().signal);
-  assert.deepEqual(addresses, PUBLIC_ADDRESSES);
-  assert.equal(calls.length, 2);
-  assert.ok(calls.every(({ init }) => init.redirect === "error" && init.headers.accept === "application/dns-json"));
-  for (const [body, headers] of [
-    [{ Status: 2 }], [{ Status: 0, Answer: [{ type: 1, data: PUBLIC_ADDRESSES[0] }] }], [{ Status: 0, TC: "true", Answer: [] }],
-    [{ Status: 0, TC: 1, Answer: [] }], [{ Status: 0, TC: false, Answer: [{ type: "1", data: PUBLIC_ADDRESSES[0] }] }], [{ Status: 0, TC: false, Answer: [{ type: 1, data: null }] }], [{ Status: 0, TC: false, Answer: [{ type: 1, data: "not-an-ip" }] }], [{ Status: 0, TC: false, Answer: [{ type: 1, data: PUBLIC_ADDRESSES[1] }] }], [{ Status: 0, TC: false, Answer: [{ type: 28, data: PUBLIC_ADDRESSES[0] }] }], [{ Status: 0, TC: false, Answer: [] }, { "content-type": "text/html" }], [{ Status: 0, TC: false, Answer: [] }, { "content-type": "application/dns-json", "content-encoding": "gzip" }],
-  ]) {
-    await assert.rejects(createCloudflareDohResolver(async () => dnsJson(body, headers))("bad.example", new AbortController().signal), /dns response/);
-  }
-  const oversized = createCloudflareDohResolver(async () => dnsJson({
-    Status: 0, TC: false, Answer: [], padding: "x".repeat(SAFE_FETCH_LIMITS.max_dns_response_bytes),
-  }));
-  await assert.rejects(oversized("large.example.co", new AbortController().signal), /body limit/);
-  let cancelled = 0;
-  const hanging = createCloudflareDohResolver(async () => new Response(new ReadableStream({
-    pull() {}, cancel() { cancelled += 1; },
-  }), { headers: { "content-type": "application/dns-json" } }));
-  const abort = new AbortController();
-  setTimeout(() => abort.abort(), 5);
-  await assert.rejects(hanging("slow.example.co", abort.signal));
-  assert.equal(cancelled, 2);
-  cancelled = 0;
-  const failedSibling = createCloudflareDohResolver(async (url) => url.endsWith("type=A")
-    ? dnsJson({ Status: 2 })
-    : new Response(new ReadableStream({ pull() {}, cancel() { cancelled += 1; } }), { headers: { "content-type": "application/dns-json" } }));
-  await assert.rejects(failedSibling("sibling.example.co", new AbortController().signal));
-  assert.equal(cancelled, 1);
+  assert.equal(result.ok, true);
+  assert.deepEqual(queries.sort((left, right) => left[1] - right[1]), [
+    ["public.example.co", 4], ["public.example.co", 6],
+  ]);
+  const fact = journal.find(({ fact: value }) => value.kind === "dns").fact;
+  assert.deepEqual(fact, { kind: "dns", completed_at: 0,
+    addresses: PUBLIC_ADDRESSES, overflow: false, failure: null });
+
+  const missing = Object.assign(new Error("no AAAA records"), { code: "ENODATA" });
+  assert.deepEqual(await createWorkersDnsResolver({
+    resolve4: async () => [PUBLIC_ADDRESSES[0]], resolve6: async () => { throw missing; },
+  })("ipv4.example.co", new AbortController().signal), [PUBLIC_ADDRESSES[0]]);
+
+  const controller = new AbortController();
+  const pending = createWorkersDnsResolver({
+    resolve4: async () => new Promise(() => {}), resolve6: async () => new Promise(() => {}),
+  })("slow.example.co", controller.signal);
+  controller.abort();
+  await assert.rejects(pending, (error) => error instanceof DOMException && error.name === "AbortError");
+
+  const timed = await safeFetchHtml("https://slow.example.co/", {
+    operation_ms: 5,
+    dns: {
+      resolve4: async () => new Promise(() => {}),
+      resolve6: async () => new Promise(() => {}),
+    },
+    fetcher: async () => { throw new Error("destination fetch must not run"); },
+  });
+  assert.equal(timed.ok, false);
+  assert.equal(timed.reason, "timeout");
+  assert.equal(timed.evidence.validated_hops.length, 0);
 });
 test("safe fetch revalidates relative redirects and returns bounded HTML evidence", async () => {
   const fetchCalls = [];
@@ -177,7 +180,8 @@ test("response, encoding, byte, fetch, DNS, and time limits are typed", async ()
   });
   assert.equal(failed.reason, "fetch_failed");
   const dns = await safeFetchHtml("https://missing.example.co/", {
-    resolver: createCloudflareDohResolver(async (url) => dnsJson({ Status: 0, TC: false, Answer: url.endsWith("type=A") ? [{ type: 1, data: PUBLIC_ADDRESSES[1] }] : [{ type: 28, data: PUBLIC_ADDRESSES[1] }] })), fetcher: async () => {
+    dns: { resolve4: async () => [PUBLIC_ADDRESSES[1]], resolve6: async () => [] },
+    fetcher: async () => {
       assert.fail("wrong-family DNS must not fetch");
     },
   });
@@ -400,27 +404,8 @@ test("scope completion clocks and seal order cancel once with zero unhandled rej
   } finally { process.off("unhandledRejection", onUnhandled); }
 });
 
-test("late DoH siblings and destination fulfillment remain owned after logical settlement", async () => {
+test("late destination fulfillment remains owned after logical settlement", async () => {
   let cancelled = 0;
-  const doh = [deferred(), deferred()]; let dohCall = 0;
-  const dohResult = await safeFetchHtml("https://public.example.co/", {
-    operation_ms: 5, fetcher: () => doh[dohCall++].promise,
-  });
-  assert.equal(dohResult.reason, "timeout");
-  doh[0].resolve(cancellable(() => { cancelled += 1; })); doh[1].resolve(cancellable(() => { cancelled += 1; }));
-  await new Promise(setImmediate);
-  assert.equal(cancelled, 2);
-
-  const sibling = deferred(); let siblingCalls = 0;
-  const siblingResult = await safeFetchHtml("https://public.example.co/", {
-    fetcher: (url) => siblingCalls++ === 0
-      ? Promise.resolve(dnsJson({ Status: 2, TC: false })) : sibling.promise,
-  });
-  assert.equal(siblingResult.reason, "dns_failure");
-  sibling.resolve(cancellable(() => { cancelled += 1; }));
-  await new Promise(setImmediate);
-  assert.equal(cancelled, 3);
-
   const destination = deferred();
   const destinationResult = await safeFetchHtml("https://public.example.co/", {
     resolver: publicResolver, operation_ms: 5, fetcher: () => destination.promise,
@@ -428,7 +413,7 @@ test("late DoH siblings and destination fulfillment remain owned after logical s
   assert.equal(destinationResult.reason, "timeout");
   destination.resolve(cancellable(() => { cancelled += 1; }));
   await new Promise(setImmediate);
-  assert.equal(cancelled, 4);
+  assert.equal(cancelled, 1);
 });
 
 test("production journal is immutable, sanitized, replayable, and all-dot admission is effect-free", async () => {
