@@ -7,11 +7,15 @@
     "build": "npm run check:protocol && tsc",
     "check:protocol": "node scripts/sync-protocol.mjs --check",
     "dev": "npx --yes wrangler@4.127.1 dev",
+    "record:demo": "playwright test --config playwright.recording.config.mjs",
     "sync:protocol": "node scripts/sync-protocol.mjs",
     "test": "npm run build && node --test test/*.test.mjs",
+    "test:browser": "playwright test --config playwright.config.mjs",
+    "test:tunnel": "node --test e2e/connect-tunnel.test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@playwright/test": "1.62.1",
     "typescript": "7.0.2"
   },
   "engines": {

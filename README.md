@@ -43,6 +43,16 @@ See the [threat model](docs/threat-model.md) for the complete security boundary.
 Provider-specific terms, attribution, privacy, and failure semantics are in the
 [Google Safe Browsing integration note](docs/google-safe-browsing.md).
 
+## Local browser verification
+
+The bounded [browser verification profile](docs/browser-verification.md) uses
+Playwright's pinned bundled Chromium at the visible default-port origin
+`https://watch.example`. A byte-transparent loopback CONNECT connector carries
+encrypted browser traffic to the real local Wrangler HTTPS Worker; it does not
+terminate TLS or serve application content. This local registration-shim run is
+not deployment or supported-browser proof. Issues #10, #11, and #12 separately
+own deployment, supported-browser verification, and public audio/video evidence.
+
 ## Project status
 
 Watch Dog is currently pre-release. This repository contains the approved product architecture, security requirements, and acceptance criteria; application implementation is tracked in [issue #1](https://github.com/tyu41275/watch-dog/issues/1).
@@ -55,6 +65,7 @@ The project is licensed under the [Apache License 2.0](LICENSE).
 - [Architecture decision](docs/adr/0001-mvp-boundary.md)
 - [Threat model](docs/threat-model.md)
 - [Google Safe Browsing integration](docs/google-safe-browsing.md)
+- [Local browser verification](docs/browser-verification.md)
 - [Acceptance criteria](docs/acceptance-criteria.md)
 - [Glossary](docs/glossary.md)
 - [Documentation index](docs/README.md)

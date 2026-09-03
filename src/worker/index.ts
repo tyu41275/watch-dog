@@ -327,11 +327,6 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
   }
 
   if (env.ASSETS) {
-    if (url.pathname === "/reference" && request.method === "GET") {
-      const assetUrl = new URL(request.url);
-      assetUrl.pathname = "/reference.html";
-      return env.ASSETS.fetch(new Request(assetUrl, request));
-    }
     return env.ASSETS.fetch(request);
   }
   return new Response("Watch Dog asset binding is unavailable", {

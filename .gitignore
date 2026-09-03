@@ -24,6 +24,8 @@ __pycache__/
 data/local/
 artifacts/
 recordings/
+.wrangler/
+test-results/
 
 # Editors and operating systems
 .DS_Store
