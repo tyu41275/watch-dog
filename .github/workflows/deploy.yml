@@ -52,6 +52,12 @@ jobs:
           set -euo pipefail
           node scripts/cloudflare-readonly-diagnostic.mjs
           test -z "$(git status --porcelain)"
+      - name: Diagnose live public-control receipt without secret output
+        env:
+          DEPLOYED_URL: https://watch-dog.tytechnologiesconsulting.workers.dev/
+          WATCH_DOG_JUDGE_USERNAME: ${{ secrets.WATCH_DOG_JUDGE_USERNAME }}
+          WATCH_DOG_JUDGE_PASSWORD: ${{ secrets.WATCH_DOG_JUDGE_PASSWORD }}
+        run: node scripts/diagnose-live-public-control.mjs
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: cloudflare-readonly-diagnostic-${{ github.run_id }}
