@@ -1,5 +1,7 @@
 name: Deploy exact Watch Dog revision
 
+run-name: Secret-safe live path diagnostic
+
 on:
   workflow_dispatch:
     inputs:
@@ -12,77 +14,41 @@ permissions:
   contents: read
 
 concurrency:
-  group: watch-dog-production
+  group: watch-dog-live-path-diagnostic-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  diagnose:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     steps:
-      - name: Check out exact requested revision
+      - name: Check out exact diagnostic head
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ inputs.expected_sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Authenticate revision and merged ancestry
+      - name: Authenticate deployed revision and diagnostic ancestry
         env:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
         run: |
           set -euo pipefail
           [[ "$EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]]
-          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
-          test "$GITHUB_SHA" = "$EXPECTED_SHA"
+          test "$EXPECTED_SHA" = "a1614e7942083cd68531d1ea0cf50717c3a66e07"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse refs/remotes/origin/main)" = "52a43598e621c74cdb68cb6cf376396d6162d550"
           git merge-base --is-ancestor "$EXPECTED_SHA" refs/remotes/origin/main
+          git merge-base --is-ancestor refs/remotes/origin/main "$GITHUB_SHA"
+          git diff --quiet refs/remotes/origin/main -- src public wrangler.jsonc package.json package-lock.json
           test -z "$(git status --porcelain)"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
-          cache: npm
-      - name: Reproduce and gate deployment
+      - name: Diagnose live login and scan path without secret values
         env:
-          EXPECTED_SHA: ${{ inputs.expected_sha }}
-        run: |
-          set -euo pipefail
-          npm ci --ignore-scripts --no-audit --no-fund
-          npm run check:protocol
-          npm run typecheck
-          npm test
-          npm run build
-          npm audit --audit-level=high
-          node scripts/verify-public-control.mjs
-          npx wrangler deploy --dry-run --outdir "$RUNNER_TEMP/wrangler-dry-run" --var "BUILD_REVISION:$EXPECTED_SHA" --var "GOOGLE_SAFE_BROWSING_ENABLED:true"
-          test -z "$(git status --porcelain)"
-      - name: Deploy exact gated bytes
-        id: deploy
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          ADMIN_USERNAME: ${{ secrets.WATCH_DOG_JUDGE_USERNAME }}
-          ADMIN_PASSWORD: ${{ secrets.WATCH_DOG_JUDGE_PASSWORD }}
-          SESSION_SIGNING_KEY: ${{ secrets.WATCH_DOG_SESSION_SIGNING_SECRET }}
-          GOOGLE_SAFE_BROWSING_API_KEY: ${{ secrets.GOOGLE_SAFE_BROWSING_API_KEY }}
-        run: |
-          set -euo pipefail
-          for name in CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN ADMIN_USERNAME ADMIN_PASSWORD SESSION_SIGNING_KEY GOOGLE_SAFE_BROWSING_API_KEY; do test -n "${!name:-}"; done
-          log="$RUNNER_TEMP/deploy.log"; trap 'rm -f -- "$log"' EXIT
-          npx wrangler deploy --strict --message "GitHub $GITHUB_SHA" --var "BUILD_REVISION:$GITHUB_SHA" --var "GOOGLE_SAFE_BROWSING_ENABLED:true" --secrets-file <(node --input-type=module -e 'const n=["ADMIN_USERNAME","ADMIN_PASSWORD","SESSION_SIGNING_KEY","GOOGLE_SAFE_BROWSING_API_KEY"];process.stdout.write(JSON.stringify(Object.fromEntries(n.map(k=>[k,process.env[k]]))))') >"$log" 2>&1 || { echo CLOUDFLARE_DEPLOY_FAIL; exit 1; }
-          node --input-type=module -e 'import{appendFileSync,readFileSync}from"node:fs";const t=readFileSync(process.argv[1],"utf8"),u=[...t.matchAll(/https:\/\/[a-z0-9.-]+\.workers\.dev\/?/giu)].at(-1)?.[0],i=[...t.matchAll(/(?:version|deployment) id:\s*([a-z0-9-]{16,})/giu)].at(-1)?.[1];if(!u||!i)process.exit(3);appendFileSync(process.env.GITHUB_OUTPUT,`url=${new URL(u).href}\ndeployment_id_redacted=${i.slice(0,8)}…${i.slice(-4)}\n`)' "$log"
-      - name: Verify exact live deployment
-        env:
-          DEPLOYED_URL: ${{ steps.deploy.outputs.url }}
-          DEPLOYMENT_ID_REDACTED: ${{ steps.deploy.outputs.deployment_id_redacted }}
+          DEPLOYED_URL: https://watch-dog.tytechnologiesconsulting.workers.dev/
           EXPECTED_SHA: ${{ inputs.expected_sha }}
           WATCH_DOG_JUDGE_USERNAME: ${{ secrets.WATCH_DOG_JUDGE_USERNAME }}
           WATCH_DOG_JUDGE_PASSWORD: ${{ secrets.WATCH_DOG_JUDGE_PASSWORD }}
-          WATCH_DOG_PROVIDER_CONSENT: "true"
-          EVIDENCE_PATH: ${{ runner.temp }}/watch-dog-deployment-evidence.json
-        run: node scripts/verify-deployment.mjs
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: watch-dog-deployment-${{ inputs.expected_sha }}
-          path: ${{ runner.temp }}/watch-dog-deployment-evidence.json
-          if-no-files-found: error
-          retention-days: 30
+        run: node scripts/diagnose-live-path.mjs
