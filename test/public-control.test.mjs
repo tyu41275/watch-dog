@@ -5,7 +5,7 @@ import { createScanMachine, reduceScanMachine } from "../dist/shared/scan-machin
 import { executePasteScan } from "../dist/worker/fetch/paste.js";
 import { PUBLIC_CONTROL, verifyPublicControl } from "../scripts/verify-public-control.mjs";
 
-const html = '<!doctype html><a href="/links/3/1">1</a> <a href="/links/3/2">2</a>';
+const html = '<html><head><title>Links</title></head><body>0 <a href="/links/3/1">1</a> <a href="/links/3/2">2</a> </body></html>';
 const publicAddress = "93.184.216.34";
 function transport(body = html) {
   let tick = 1_000;
@@ -50,4 +50,18 @@ test("prior special-host and no-anchor controls fail through the production mach
     fetch_seams: transport("<!doctype html><title>generic page</title>"),
   });
   assert.equal(receipt(generic).accepted_targets, 0);
+});
+
+test("the frozen control fails closed on redirect and occurrence drift", async () => {
+  let call = 0, tick = 1_000;
+  await assert.rejects(verifyPublicControl({ fetch_seams: {
+    resolver: async () => [publicAddress], now: () => tick++, fetcher: async () => {
+      call += 1;
+      return call === 1 ? new Response(null, { status: 302, headers: { location: "/moved" } }) :
+        new Response(html, { status: 200, headers: { "content-type": "text/html" } });
+    },
+  } }), /control_contract_failed/);
+  await assert.rejects(verifyPublicControl({ fetch_seams: transport(
+    `${html}<a href="/links/3/1">duplicate</a>`,
+  ) }), /control_contract_failed/);
 });

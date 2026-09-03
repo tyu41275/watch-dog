@@ -43,7 +43,7 @@ function github(options = {}) {
       state.refCreates += 1; state.ref = true; return { ref: "refs/heads/agent/replacement" };
     }
     if (path.startsWith("actions/workflows/deploy.yml/runs"))
-      return { workflow_runs: state.runs };
+      return options.pages ?? [{ workflow_runs: state.runs }];
     if (path === "actions/workflows/deploy.yml/dispatches" && method === "POST") {
       state.dispatchCalls += 1;
       state.runs.push({ id: 7001, head_branch: "agent/replacement",
@@ -120,4 +120,16 @@ test("duplicate or wrong-head dispatch history fails closed", async (t) => {
       run: fake.run, sleep: async () => {} }));
     assert.equal(fake.state.dispatchCalls, 0);
   }
+});
+
+test("a matching run on a later page resumes without dispatch", async (t) => {
+  const gitDir = await directory(t), existing = { id: 9003, head_branch: "agent/replacement",
+    event: "workflow_dispatch", head_sha: head };
+  const fake = github({ merged: true, pages: [
+    { workflow_runs: [] }, { workflow_runs: [existing] },
+  ] });
+  const result = await deploymentTransition({ pr: 51, head, checkOnly: false, gitDir,
+    run: fake.run, sleep: async () => {} });
+  assert.equal(result.run_id, 9003);
+  assert.equal(fake.state.dispatchCalls, 0);
 });

@@ -112,10 +112,18 @@ async function main() {
     "missing_csrf_accepted");
   const receipt = await scan(first, PUBLIC_CONTROL.url);
   const actualTargets = receipt.targets?.map(({ canonical_url }) => canonical_url).sort();
-  check(receipt.accepted_targets === 2 && receipt.rejected_candidates === 0 &&
+  check(receipt.accepted_targets === 2 && receipt.occurrence_count?.kind === "exact" &&
+    receipt.occurrence_count.count === 2 &&
+    receipt.targets?.every(({ occurrences }) => occurrences?.length === 1) &&
+    receipt.rejected_candidates === 0 &&
     receipt.unscannable_reason === null && receipt.scan_ids.length === 2 &&
     JSON.stringify(actualTargets) === JSON.stringify([...PUBLIC_CONTROL.targets].sort()) &&
-    receipt.fetch_evidence?.validated_hops?.length > 0, "public_control_failed");
+    receipt.fetch_evidence?.requested_url === PUBLIC_CONTROL.url &&
+    receipt.fetch_evidence?.final_url === PUBLIC_CONTROL.url &&
+    receipt.fetch_evidence?.redirect_chain?.length === 0 &&
+    receipt.fetch_evidence?.validated_hops?.length === 1 &&
+    receipt.fetch_evidence.validated_hops[0]?.hostname === "httpbingo.org",
+  "public_control_failed");
   const observations = [], storedTargets = [];
   for (const id of receipt.scan_ids) {
     const stored = await getResult(first, id), observation = stored?.result?.provider_observations?.[0];

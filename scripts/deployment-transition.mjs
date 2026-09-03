@@ -87,9 +87,12 @@ function proveAncestor(run, ancestor, descendant, code) {
     ["ahead", "identical"].includes(comparison.status), code);
 }
 function matchingRuns(run, ref, head) {
-  const value = api(run, `actions/workflows/deploy.yml/runs?branch=${encodeURIComponent(ref)}&event=workflow_dispatch&per_page=100`, "GET");
-  requireState(Array.isArray(value?.workflow_runs), "workflow_runs_invalid");
-  const scoped = value.workflow_runs.filter((item) => item?.head_branch === ref &&
+  const pages = run([...endpoint(`actions/workflows/deploy.yml/runs?branch=${encodeURIComponent(ref)}&event=workflow_dispatch&per_page=100`),
+    "--paginate", "--slurp"]);
+  requireState(Array.isArray(pages) && pages.every((page) =>
+    Array.isArray(page?.workflow_runs)), "workflow_runs_invalid");
+  const scoped = pages.flatMap(({ workflow_runs }) => workflow_runs).filter((item) =>
+    item?.head_branch === ref &&
     item?.event === "workflow_dispatch");
   requireState(!scoped.some((item) => item.head_sha !== head), "workflow_run_ref_drift");
   const matches = scoped.filter((item) => item.head_sha === head);
