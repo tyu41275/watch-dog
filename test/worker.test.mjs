@@ -228,7 +228,8 @@ test("actual Worker gates and composes the live provider for both scan routes", 
     for (const call of providerCalls) {
       assert.equal(call.url.origin + call.url.pathname,
         "https://safebrowsing.googleapis.com/v5/urls:search");
-      assert.equal(call.url.searchParams.size, 1);
+      assert.equal(call.url.searchParams.size, 2);
+      assert.equal(call.url.searchParams.get("alt"), "json");
       assert.equal(call.headers.get("x-goog-api-key"), secret);
       assert.equal(call.url.href.includes(secret), false);
     }

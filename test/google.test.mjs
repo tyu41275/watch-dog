@@ -75,7 +75,8 @@ test("v5 lookup sends one raw canonical URL and keeps the API key out of the URL
   const observation = parseProviderObservation(await adapter.observe(request));
   assert.equal(seen.length, 1);
   assert.equal(seen[0].url.origin + seen[0].url.pathname, GOOGLE_SAFE_BROWSING.endpoint);
-  assert.deepEqual([...seen[0].url.searchParams.keys()], ["urls"]);
+  assert.deepEqual([...seen[0].url.searchParams.keys()], ["alt", "urls"]);
+  assert.equal(seen[0].url.searchParams.get("alt"), "json");
   assert.equal(seen[0].url.searchParams.get("urls"), canonicalTarget);
   assert.equal(seen[0].url.href.includes(secret), false);
   assert.equal(seen[0].headers.get("x-goog-api-key"), secret);

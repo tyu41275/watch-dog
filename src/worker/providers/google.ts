@@ -249,6 +249,7 @@ export class GoogleSafeBrowsingAdapter implements ProviderAdapter {
       return providerErrorObservation(request, this.source, "not_configured");
     }
     const endpoint = new URL(GOOGLE_SAFE_BROWSING.endpoint);
+    endpoint.searchParams.set("alt", "json");
     endpoint.searchParams.append("urls", request.canonical_target);
     const controller = new AbortController();
     let expire!: (reason: DOMException) => void;
