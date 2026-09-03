@@ -135,6 +135,12 @@ try {
   let providerBody = null;
   try { providerBody = providerText.length <= 64_000 ? JSON.parse(providerText) : null; }
   catch { /* shape only */ }
+  const sanitizedProviderMessage = typeof providerBody?.error?.message === "string"
+    ? providerBody.error.message.slice(0, 500)
+      .replaceAll(required.GOOGLE_SAFE_BROWSING_API_KEY, "[REDACTED]")
+      .replace(/https?:\/\/[^\s"']+/giu, "[URL]")
+      .replace(/[A-Za-z0-9_-]{24,}/gu, "[TOKEN]")
+    : null;
   evidence.direct_provider_shape = {
     status: response.status,
     content_type_json: providerContentType?.split(";", 1)[0]?.trim().toLowerCase() === "application/json",
@@ -154,6 +160,7 @@ try {
     error_code: Number.isSafeInteger(providerBody?.error?.code) ? providerBody.error.code : null,
     error_status: typeof providerBody?.error?.status === "string" &&
       /^[A-Z_]{3,40}$/u.test(providerBody.error.status) ? providerBody.error.status : null,
+    error_message_sanitized: sanitizedProviderMessage,
     error_message_class: typeof providerBody?.error?.message !== "string" ? null
       : /API key not valid|API_KEY_INVALID/iu.test(providerBody.error.message) ? "api_key_invalid"
       : /API has not been used|is disabled/iu.test(providerBody.error.message) ? "api_disabled"
