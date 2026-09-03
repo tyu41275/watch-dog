@@ -5,9 +5,9 @@ import { executePasteScan } from "../dist/worker/fetch/paste.js";
 import { createScanMachine, reduceScanMachine } from "../dist/shared/scan-machine.js";
 
 export const PUBLIC_CONTROL = Object.freeze({
-  id: "httpbingo-links-3-0-v1",
-  url: "https://httpbingo.org/links/3/0",
-  body: Object.freeze({ length: 115, digest: "f06457b2" }),
+  id: "httpbin-links-3-0-v1",
+  url: "https://httpbin.org/links/3/0",
+  body: Object.freeze({ length: 115, digest: "70a6c992" }),
   atoms: Object.freeze([
     Object.freeze({ kind: "ANCHOR", href: "/links/3/1", href_overflow: false,
       text: "1", text_overflow: false }),
@@ -15,8 +15,8 @@ export const PUBLIC_CONTROL = Object.freeze({
       text: "2", text_overflow: false }),
   ]),
   targets: Object.freeze([
-    "https://httpbingo.org/links/3/1",
-    "https://httpbingo.org/links/3/2",
+    "https://httpbin.org/links/3/1",
+    "https://httpbin.org/links/3/2",
   ]),
 });
 
@@ -68,7 +68,7 @@ export async function verifyPublicControl(dependencies = {}) {
     !Array.isArray(receipt.fetch_evidence?.validated_hops) ||
     receipt.fetch_evidence.validated_hops.length !== 1 ||
     receipt.fetch_evidence.validated_hops.some(({ hostname, address_count }) =>
-      hostname !== "httpbingo.org" || !Number.isSafeInteger(address_count) || address_count < 1)) {
+      hostname !== "httpbin.org" || !Number.isSafeInteger(address_count) || address_count < 1)) {
     fail("control_contract_failed");
   }
   return Object.freeze({ contract_id: PUBLIC_CONTROL.id, accepted_targets: 2,
