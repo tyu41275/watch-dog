@@ -2,6 +2,10 @@
 
 Watch Dog is an evidence-first URL risk inspector for people and browser agents. It analyzes links, explains the evidence behind each result, and represents uncertainty honestly: a threat provider returning no match means `no_known_match`, never “safe.”
 
+- Live HTTPS app: https://watch-dog.tytechnologiesconsulting.workers.dev/
+- Public demo video: [download the 2:46 English MP4](https://github.com/tyu41275/watch-dog/releases/download/watchdog-demo-2026-09-03/watchdog-youtube-final-pronunciation-fixed.mp4)
+- License: [Apache-2.0](LICENSE)
+
 ## How it works
 
 Watch Dog supports two complementary scan modes:
@@ -47,9 +51,24 @@ Provider-specific terms, attribution, privacy, and failure semantics are in the
 
 The pinned Playwright harness exercises real local Wrangler HTTPS, authentication, Assets, Durable Objects, sessions, scans, and WebMCP registration in one networkless container. Its evidence is local-only and makes no deployment, provider, supported-browser, recording-publication, or submission claim. See [local browser verification](docs/browser-verification.md).
 
+## Install, test, and run
+
+Use Node.js 22 or newer. From a fresh clone:
+
+```sh
+npm ci --ignore-scripts --no-audit --no-fund
+npm run check:protocol
+npm run typecheck
+npm test
+npm run build
+npm audit --audit-level=high
+```
+
+For local development, copy `.env.example` to an ignored `.dev.vars`, supply local-only values, and run `npm run dev`. No credential has a default. Keep Google Safe Browsing disabled unless an authorized server-side key is present; the UI still requires explicit disclosure consent for every live invocation. See [exact deployment](docs/deployment.md), [judge testing](docs/judge-testing.md), and [provider terms and bounds](docs/google-safe-browsing.md).
+
 ## Project status
 
-Watch Dog is currently pre-release. This repository contains the approved product architecture, security requirements, and acceptance criteria; application implementation is tracked in [issue #1](https://github.com/tyu41275/watch-dog/issues/1).
+The deployed challenge candidate implements both protected scan modes, the shared evidence pipeline, static judge authentication, a live Google Safe Browsing adapter, and three read-only WebMCP tools. Public evidence and any remaining external submission gate are tracked in the [submission record](docs/submission-record.md) and [issue #12](https://github.com/tyu41275/watch-dog/issues/12).
 
 The project is licensed under the [Apache License 2.0](LICENSE).
 
@@ -61,6 +80,9 @@ The project is licensed under the [Apache License 2.0](LICENSE).
 - [Google Safe Browsing integration](docs/google-safe-browsing.md)
 - [Acceptance criteria](docs/acceptance-criteria.md)
 - [Local browser verification](docs/browser-verification.md)
+- [Judge testing instructions](docs/judge-testing.md)
+- [English submission description](docs/devpost-description.md)
+- [Submission and freeze record](docs/submission-record.md)
 - [Glossary](docs/glossary.md)
 - [Documentation index](docs/README.md)
 

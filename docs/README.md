@@ -26,5 +26,8 @@ These documents capture time-bound launch requirements without defining the prod
 - [Exact deployment](deployment.md)
 - [Delivery plan](three-day-plan.md)
 - [Launch compliance](devpost-compliance.md)
+- [Judge testing instructions](judge-testing.md)
+- [English submission description](devpost-description.md)
+- [Submission and freeze record](submission-record.md)
 - [Demo script and resources](demo-script-and-resources.md)
 - [General demo-production workflow](demo-workflow.md)
