@@ -1,6 +1,6 @@
 # Security policy
 
-Watch Dog has an approved MVP vision but no released application version yet.
+Watch Dog has a deployed, deadline-bounded challenge candidate. It is not represented as a general-purpose production security control or a safety guarantee.
 
 ## Reporting a vulnerability
 
@@ -12,7 +12,7 @@ If private reporting is unavailable, contact the repository owner through their 
 
 ## Scope and response
 
-There is no supported release yet. Reports about repository configuration, documentation that could encourage unsafe handling, or accidental sensitive-data exposure are still welcome. Receipt will be acknowledged when practical; remediation and disclosure timing will depend on severity and reproducibility.
+Reports about the public application, repository configuration, unsafe handling guidance, or accidental sensitive-data exposure are welcome. Receipt will be acknowledged when practical; remediation and disclosure timing will depend on severity and reproducibility. During a recorded judging freeze, critical security fixes take priority and must be disclosed in the submission/release record.
 
 ## Safe handling
 

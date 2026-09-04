@@ -2,7 +2,7 @@
 
 This repository includes a pinned Playwright/Chromium acceptance and operator-invoked recording harness. Its local evidence does not prove deployment, provider access, supported Chrome/WebMCP behavior, recording publication, or submission acceptance.
 
-The credential-bound deployment workflow separately installs Google Chrome stable, proves its reported product/version is 149 or newer, launches that exact installed binary with experimental web-platform features enabled, and requires native `document.modelContext` discovery and invocation against the exact deployed revision. Its sanitized artifact retains the product/version, tool names, invocation outcomes, screenshots and recordings, but no browser binary path, credential, cookie, CSRF value, API key, raw provider response or scan identifier.
+The credential-bound deployment workflow separately installs Google Chrome stable, proves its reported product/version is 149 or newer, launches that exact installed binary with experimental web-platform features enabled, and requires native `document.modelContext` discovery and invocation against the exact deployed revision. Its artifact retains the product/version, tool names, invocation outcomes, screenshots and recordings, but no browser binary path, credential, cookie, CSRF value, API key or raw provider response. The JSON receipt omits scan identifiers; a product screenshot may visibly contain an opaque, session-owned identifier that has expired before publication and is unusable without the unrecorded HttpOnly cookie.
 
 ## Isolation boundary
 
