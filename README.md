@@ -2,7 +2,7 @@
 
 Watch Dog is an evidence-first URL risk inspector for people and browser agents. It analyzes URLs and inert pasted HTML, explains the evidence behind each result, and keeps uncertainty explicit: a provider no-match is `no_known_match`, never a claim that a URL is safe.
 
-**Production status (verified 2026-09-04):** the public HTTPS surface is live at **https://watch-dog.tytechnologiesconsulting.workers.dev/**, but the deployment is currently degraded: `/api/health` returns HTTP 200 while `/api/revision` returns HTTP 503 (`revision_unavailable`). Treat that as a missing or malformed `BUILD_REVISION` deployment binding, not as a fully healthy release. The implemented app includes protected Paste Scan and Live Page Scan flows, static operator authentication, ephemeral session-owned results, Google Safe Browsing v5 integration, and three read-only WebMCP tools. It is not a general-purpose security control or a safety guarantee.
+The implemented app includes protected Paste Scan and Live Page Scan flows, static operator authentication, ephemeral session-owned results, Google Safe Browsing v5 integration, and three read-only WebMCP tools. It is not a general-purpose security control or a safety guarantee.
 
 - Health: https://watch-dog.tytechnologiesconsulting.workers.dev/api/health
 - Deployment revision check: https://watch-dog.tytechnologiesconsulting.workers.dev/api/revision
